@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "default": "garv-gift-gallery",
+    "garv-gift-gallery": "garv-gift-gallery"
+  },
+  "targets": {},
+  "etags": {}
+}

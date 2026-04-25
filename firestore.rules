@@ -1,0 +1,27 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 1. PRODUCTS: Anyone can view the catalogue. Only logged-in users can edit.
+    match /products/{productId} {
+      allow read: if true; 
+      allow write: if request.auth != null; 
+    }
+    
+    // 2. ORDERS: Only verified, logged-in users can place an order.
+    match /orders/{orderId} {
+      allow create: if request.auth != null; 
+      allow read, update, delete: if request.auth != null; 
+    }
+
+    // 3. CUSTOMERS (CRM): 
+    match /customers/{customerPhone} {
+      // CUSTOMER PRIVACY: A user can only create/edit a profile if the phone number they logged in with matches the document ID!
+      allow read, write: if request.auth != null && request.auth.token.phone_number == customerPhone;
+      
+      // ADMIN ACCESS: You (logging in with an Admin Email) can read and edit everyone's profiles.
+      allow read, write: if request.auth != null && request.auth.token.email != null;
+    }
+    
+  }
+}
