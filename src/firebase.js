@@ -10,6 +10,17 @@ import { getAuth } from "firebase/auth";
 // Your web app's Firebase configuration
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
+  apiKey: "AIzaSyAvLHaQQ9k6HTmm8G5DdxHT2oIKk2tSXhY",
+  authDomain: "garv-gift-gallery.firebaseapp.com",
+  projectId: "garv-gift-gallery",
+  storageBucket: "garv-gift-gallery.firebasestorage.app",
+  messagingSenderId: "423716897043",
+  appId: "1:423716897043:web:aa85c118e8080ad2c91ae6",
+  measurementId: "G-FW4403T593"
+};
+
+/*
+  const firebaseConfig = {
   apiKey: "AIzaSyB3nVtlfp22Gv_y5X6dB0kFYbwZG0KhP7M",
   authDomain: "garv-51679.firebaseapp.com",
   projectId: "garv-51679",
@@ -18,7 +29,7 @@ const firebaseConfig = {
   appId: "1:234622283281:web:814e4e11035d3621268bb0",
   measurementId: "G-FW4403T593"
 };
-
+*/
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const analytics = getAnalytics(app);
