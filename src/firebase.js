@@ -15,8 +15,7 @@ const firebaseConfig = {
   projectId: "garv-gift-gallery",
   storageBucket: "garv-gift-gallery.firebasestorage.app",
   messagingSenderId: "423716897043",
-  appId: "1:423716897043:web:aa85c118e8080ad2c91ae6",
-  measurementId: "G-FW4403T593"
+  appId: "1:423716897043:web:aa85c118e8080ad2c91ae6"
 };
 
 /*
