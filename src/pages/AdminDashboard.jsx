@@ -5,6 +5,7 @@ import { db, storage } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import Papa from 'papaparse'; 
+import DOMPurify from 'dompurify'; // 🛡️ ADDED: The security sanitizer
 
 const AdminDashboard = () => {
   const [activeTab, setActiveTab] = useState('inventory'); 
@@ -94,7 +95,7 @@ const AdminDashboard = () => {
     link.click();
   };
 
-  // --- ⬆️ BULK IMPORT (UPSERT) FUNCTION ---
+  // --- ⬆️ BULK IMPORT (UPSERT) FUNCTION WITH SANITIZATION ---
   const handleBulkImport = (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -111,7 +112,13 @@ const AdminDashboard = () => {
 
           data.forEach((row) => {
             if (!row.name && !row.title) return; 
-            const safeTitle = row.name || row.title;
+            
+            // 🛡️ SANITIZE STRINGS TO PREVENT XSS ATTACKS
+            const rawTitle = row.name || row.title;
+            const safeTitle = DOMPurify.sanitize(rawTitle);
+            const safeDesc = DOMPurify.sanitize(row.desc || row.description || "No description provided.");
+            const safeCat = DOMPurify.sanitize(row.cat || row.tags || "");
+            const safeImageUrl = DOMPurify.sanitize(row.imageUrl || row.image || "");
             
             const existingProduct = products.find(p => {
               const pTitle = p.name || p.title || "";
@@ -132,9 +139,9 @@ const AdminDashboard = () => {
               bulk: Number(row.bulk || row.bulkPrice) || 0,
               moq: Number(row.moq) || 1,
               packSize: Number(row.packSize) || 1,
-              desc: row.desc || row.description || "No description provided.",
-              cat: row.cat || row.tags || "",
-              imageUrl: row.imageUrl || row.image || "", 
+              desc: safeDesc,
+              cat: safeCat,
+              imageUrl: safeImageUrl, 
             }, { merge: true }); 
             
             count++;

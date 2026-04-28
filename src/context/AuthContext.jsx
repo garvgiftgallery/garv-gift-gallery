@@ -8,27 +8,31 @@ export const useAuth = () => useContext(AuthContext);
 
 export const AuthProvider = ({ children }) => {
   const [currentUser, setCurrentUser] = useState(null);
-  const [userTier, setUserTier] = useState('guest'); // 'guest', 'retail', 'wholesale', 'bulk', or 'admin'
+  const [userTier, setUserTier] = useState('guest'); 
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // ⚠️ REPLACE THIS WITH YOUR ACTUAL ADMIN EMAIL
+  const ADMIN_EMAIL = "garvgiftgallery@gmail.com"; 
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       
       if (user) {
-        if (user.phoneNumber) {
-          // This is a Customer (Logged in via OTP)
-          const docRef = doc(db, 'customers', user.phoneNumber);
-          const docSnap = await getDoc(docRef);
-          if (docSnap.exists() && docSnap.data().tier) {
-            setUserTier(docSnap.data().tier); // Apply their secure database tier!
-          } else {
-            setUserTier('retail'); // Fallback
-          }
-        } else {
-          // This is the Admin (Logged in via Email)
+        // 1. Check if this is the Admin logging in
+        if (user.email === ADMIN_EMAIL) {
           setUserTier('admin');
+        } else {
+          // 2. This is a Customer. Fetch their tier using their unique UID!
+          const docRef = doc(db, 'customers', user.uid);
+          const docSnap = await getDoc(docRef);
+          
+          if (docSnap.exists() && docSnap.data().tier) {
+            setUserTier(docSnap.data().tier); // Apply their secure database tier
+          } else {
+            setUserTier('retail'); // Fallback for brand new users
+          }
         }
       } else {
         setUserTier('guest');

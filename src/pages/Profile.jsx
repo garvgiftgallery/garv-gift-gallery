@@ -1,165 +1,169 @@
-import { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { db } from '../firebase';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
+import { updateProfile } from 'firebase/auth';
+import { doc, updateDoc } from 'firebase/firestore';
+import { db } from '../firebase'; // Make sure this path points to your firebase config
 
 const Profile = () => {
   const { currentUser, userTier, logout } = useAuth();
-  const [customerData, setCustomerData] = useState(null);
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    if (!currentUser) {
+  // State for editing name
+  const [isEditing, setIsEditing] = useState(false);
+  const [newName, setNewName] = useState(currentUser?.displayName || '');
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleLogout = async () => {
+    try {
+      await logout();
       navigate('/login');
+    } catch (error) {
+      console.error('Failed to log out', error);
+    }
+  };
+
+  const handleSaveName = async () => {
+    setError('');
+    
+    // Security Layer 1: Sanitize (trim whitespace)
+    const sanitizedName = newName.trim();
+    
+    // Security Layer 2: Validation & Payload Limiting
+    if (sanitizedName.length === 0) {
+      setError('Name cannot be empty.');
+      return;
+    }
+    if (sanitizedName.length > 50) {
+      setError('Name is too long (max 50 characters).');
       return;
     }
 
-    const fetchProfileData = async () => {
-      try {
-        const docRef = doc(db, 'customers', currentUser.phoneNumber);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setCustomerData(docSnap.data());
-        }
-
-        const q = query(collection(db, 'orders'), where('customerPhone', '==', currentUser.phoneNumber));
-        const orderSnap = await getDocs(q);
-        setOrders(orderSnap.docs.map(d => ({ id: d.id, ...d.data() })));
-      } catch (error) {
-        console.error("Error fetching profile:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchProfileData();
-  }, [currentUser, navigate]);
-
-  const handleLogout = async () => {
-    await logout();
-    navigate('/');
+    setIsSaving(true);
+    try {
+      // 1. Update the Firebase Auth Token identity
+      await updateProfile(currentUser, { displayName: sanitizedName });
+      
+      // 2. Update the permanent Firestore Database record
+      const userRef = doc(db, 'customers', currentUser.uid);
+      await updateDoc(userRef, { name: sanitizedName });
+      
+      setIsEditing(false);
+    } catch (err) {
+      console.error(err);
+      setError('Failed to update name. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  if (loading) return <div style={styles.emptyState}>Loading Profile...</div>;
-
-  const customerName = customerData?.name || 'Valued Customer';
-  const initial = customerName.charAt(0).toUpperCase();
+  const initial = currentUser?.displayName 
+    ? currentUser.displayName.charAt(0).toUpperCase() 
+    : (currentUser?.email ? currentUser.email.charAt(0).toUpperCase() : 'V');
 
   return (
-    <div style={styles.container}>
-      
-      {/* Flattened, Compact VIP Card */}
-      <div style={styles.membershipCard}>
-        <button onClick={handleLogout} style={styles.logoutBtn} title="Sign Out">
+    <div className="max-w-4xl mx-auto mt-8 px-4">
+      {/* 💳 PROFILE CARD */}
+      <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 relative">
+        
+        <button 
+          onClick={handleLogout}
+          className="absolute top-6 right-6 border border-gray-300 text-gray-700 px-4 py-2 rounded-md text-sm font-medium hover:bg-gray-50 transition-colors"
+        >
           Sign Out
         </button>
 
-        <div style={styles.avatar}>{initial}</div>
-        <h2 style={styles.name}>{customerName}</h2>
-        <p style={styles.phone}>{currentUser.phoneNumber}</p>
-        
-        {(userTier === 'wholesale' || userTier === 'bulk') && (
-          <div style={{ marginTop: '8px' }}>
-            <span style={styles.tierBadge}>
-              {userTier} Partner
-            </span>
+        <div className="flex flex-col items-center text-center space-y-4 pt-4">
+          <div className="w-20 h-20 bg-black text-[#D4AF37] rounded-full flex items-center justify-center text-3xl font-bold">
+            {initial}
+          </div>
+          
+          <div className="w-full max-w-sm flex flex-col items-center">
+            {error && <p className="text-red-500 text-xs mb-2">{error}</p>}
+            
+            {/* NAME DISPLAY & EDITING UI */}
+            {isEditing ? (
+              <div className="flex flex-col w-full space-y-2 mt-2">
+                <input 
+                  type="text"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  maxLength={50} // Enforces limit natively in HTML
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#D4AF37] focus:outline-none text-center"
+                  placeholder="Enter your name"
+                />
+                <div className="flex justify-center gap-2">
+                  <button 
+                    onClick={handleSaveName}
+                    disabled={isSaving}
+                    className="bg-[#111111] text-white px-4 py-1.5 rounded text-sm font-semibold hover:bg-black disabled:opacity-50 transition-colors"
+                  >
+                    {isSaving ? 'Saving...' : 'Save'}
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setIsEditing(false);
+                      setNewName(currentUser?.displayName || '');
+                      setError('');
+                    }}
+                    disabled={isSaving}
+                    className="bg-gray-100 text-gray-700 px-4 py-1.5 rounded text-sm font-semibold hover:bg-gray-200 disabled:opacity-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-bold text-gray-900">
+                  {currentUser?.displayName || 'Valued Customer'}
+                </h1>
+                <button 
+                  onClick={() => setIsEditing(true)}
+                  className="text-gray-400 hover:text-[#D4AF37] transition-colors mt-1"
+                  title="Edit Name"
+                >
+                  {/* Simple Pencil Icon */}
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                </button>
+              </div>
+            )}
+
+            <p className="text-gray-500 mt-2">{currentUser?.email || currentUser?.phoneNumber}</p>
+            
+            {/* Show Pricing Tier */}
+            <div className="mt-3 inline-block bg-[#F9F8F6] border border-[#D4AF37] text-black px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider">
+              Tier: {userTier}
+            </div>
+          </div>
+        </div>
+
+        {/* 🚨 THE VIP DOOR: Only shows if user is an Admin */}
+        {userTier === 'admin' && (
+          <div className="mt-8 border-t border-gray-100 pt-6 flex justify-center">
+            <Link 
+              to="/garv-secure-admin" 
+              className="bg-[#D4AF37] text-white px-8 py-3 rounded-md font-bold uppercase tracking-wider hover:bg-[#b5952f] transition-colors shadow-md flex items-center gap-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+              Open Admin Dashboard
+            </Link>
           </div>
         )}
       </div>
 
-      <h3 style={styles.sectionTitle}>Order History</h3>
-      
-      {orders.length === 0 ? (
-        <div style={styles.emptyState}>No orders found.</div>
-      ) : (
-        <div style={styles.orderList}>
-          {orders.map((order, index) => (
-            <div key={order.id} style={{
-              ...styles.orderRow,
-              borderBottom: index === orders.length - 1 ? 'none' : '1px solid #EAEAEA'
-            }}>
-              <div>
-                <span style={styles.orderId}>Order #{order.id.slice(0, 6).toUpperCase()}</span>
-                <p style={styles.orderMeta}>{order.items?.length || 0} items ordered</p>
-              </div>
-              <span style={styles.orderAmount}>₹{order.totalAmount}</span>
-            </div>
-          ))}
+      {/* 📦 ORDER HISTORY */}
+      <div className="mt-8">
+        <h2 className="text-lg font-bold text-gray-900 mb-4 px-1">Order History</h2>
+        <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 text-center text-gray-500">
+          No past orders found.
         </div>
-      )}
+      </div>
     </div>
   );
-};
-
-const styles = {
-  container: { maxWidth: '600px', margin: '0 auto', padding: '24px 16px' },
-  
-  membershipCard: { 
-    backgroundColor: '#FFF', 
-    borderRadius: '8px', 
-    border: '1px solid #EAEAEA', 
-    padding: '24px', 
-    marginBottom: '32px', 
-    display: 'flex', 
-    flexDirection: 'column', 
-    alignItems: 'center', 
-    textAlign: 'center', 
-    position: 'relative' 
-  },
-  logoutBtn: { 
-    position: 'absolute', 
-    top: '16px', 
-    right: '16px', 
-    backgroundColor: '#FAFAFA', 
-    color: '#111', 
-    border: '1px solid #EAEAEA', 
-    padding: '4px 12px', 
-    borderRadius: '4px', 
-    fontSize: '0.75rem', 
-    fontWeight: '500', 
-    cursor: 'pointer'
-  },
-  avatar: { 
-    width: '56px', 
-    height: '56px', 
-    backgroundColor: '#111', 
-    color: '#FFF', 
-    borderRadius: '50%', 
-    display: 'flex', 
-    alignItems: 'center', 
-    justifyContent: 'center', 
-    fontSize: '1.4rem', 
-    fontWeight: '600', 
-    marginBottom: '12px'
-  },
-  name: { fontSize: '1.25rem', fontWeight: '600', color: '#111', margin: '0 0 4px 0', letterSpacing: '-0.3px' },
-  phone: { fontSize: '0.85rem', color: '#666', margin: '0 0 12px 0' },
-  
-  tierBadge: { 
-    display: 'inline-block',
-    padding: '4px 12px', 
-    borderRadius: '4px', 
-    border: '1px solid #C5A059', 
-    backgroundColor: '#FFFAF0', 
-    color: '#B8860B', 
-    fontSize: '0.7rem', 
-    fontWeight: '700', 
-    letterSpacing: '1px', 
-    textTransform: 'uppercase'
-  },
-  
-  sectionTitle: { fontSize: '1rem', fontWeight: '600', color: '#111', marginBottom: '12px', paddingLeft: '2px' },
-  
-  orderList: { display: 'flex', flexDirection: 'column', backgroundColor: '#FFF', borderRadius: '8px', border: '1px solid #EAEAEA', padding: '0 16px' },
-  orderRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0' },
-  orderId: { fontSize: '0.9rem', fontWeight: '500', color: '#111' },
-  orderMeta: { fontSize: '0.8rem', color: '#888', marginTop: '2px', margin: 0 },
-  orderAmount: { fontSize: '0.95rem', fontWeight: '600', color: '#111' },
-  
-  emptyState: { textAlign: 'center', padding: '32px', color: '#666', fontSize: '0.9rem', backgroundColor: '#FAFAFA', borderRadius: '8px', border: '1px solid #EAEAEA' }
 };
 
 export default Profile;

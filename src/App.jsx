@@ -9,13 +9,14 @@ import Footer from './components/Footer';
 // Page Components
 import ShopGallery from './pages/ShopGallery';
 import Cart from './pages/Cart';
-import Login from './pages/Login';
 import Profile from './pages/Profile';
 import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
+import AuthPage from './pages/AuthPage';
 
 function App() {
-  const { currentUser } = useAuth(); // Check if someone is logged in!
+  // 🚨 GRAB THE USER TIER FROM CONTEXT
+  const { currentUser, userTier } = useAuth(); 
 
   return (
     <Router>
@@ -27,7 +28,6 @@ function App() {
         }}
       >
         <Navbar />
-        {/* Main Content Area: Optimized for Full-Screen Mobile */}
         <main 
           className="w-full lg:max-w-[1400px] mx-auto flex-1" 
           style={{ padding: '2rem 5%' }}
@@ -36,16 +36,23 @@ function App() {
             {/* Customer Routes */}
             <Route path="/" element={<ShopGallery />} />
             <Route path="/cart" element={<Cart />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/profile" element={<Profile />} />
+            
+            {/* Profile Route: Kick them to login if NOT logged in */}
+            <Route 
+              path="/profile" 
+              element={currentUser ? <Profile /> : <Navigate to="/login" />} 
+            />
+           
+            <Route path="/login" element={<AuthPage />} />
+            <Route path="/signup" element={<AuthPage />} />
 
             {/* Secure Admin Portal Access */}
             <Route path="/admin-portal-access" element={<AdminLogin />} />
             
-            {/* THE BOUNCER: Only allows Admin access */}
+            {/* 🚨 THE UPGRADED BOUNCER: Only allows true Admins access */}
             <Route 
               path="/garv-secure-admin" 
-              element={currentUser ? <AdminDashboard /> : <Navigate to="/admin-portal-access" />} 
+              element={userTier === 'admin' ? <AdminDashboard /> : <Navigate to="/login" />} 
             />
 
             {/* Fallback for undefined routes */}
