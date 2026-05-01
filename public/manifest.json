@@ -1,0 +1,20 @@
+{
+  "short_name": "Garv Gifts",
+  "name": "Garv Gift Gallery B2B Portal",
+  "icons": [
+    {
+      "src": "/assets/logo-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/assets/logo-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#F9F8F6",
+  "display": "standalone",
+  "theme_color": "#111111"
+}

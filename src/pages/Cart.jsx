@@ -19,40 +19,61 @@ const Cart = () => {
       let customerName = "Valued Customer";
       let customerEmail = currentUser.email || "";
 
-      const userDocRef = doc(db, 'customers', currentUser.phoneNumber);
-      const userDocSnap = await getDoc(userDocRef);
-      if (userDocSnap.exists()) {
-        customerName = userDocSnap.data().name || customerName;
-        customerEmail = userDocSnap.data().email || customerEmail;
+      // 🧠 FIXED: Database lookup now securely uses the UID from Sprint 1/2
+      if (currentUser.uid) {
+        const userDocRef = doc(db, 'customers', currentUser.uid);
+        const userDocSnap = await getDoc(userDocRef);
+        if (userDocSnap.exists()) {
+          customerName = userDocSnap.data().name || customerName;
+          customerEmail = userDocSnap.data().email || customerEmail;
+        }
       }
 
+      // 1. Generate Order in Firestore Database
       const orderRef = await addDoc(collection(db, 'orders'), {
+        userId: currentUser.uid,
         customerName: customerName,
-        customerPhone: currentUser.phoneNumber,
+        customerPhone: currentUser.phoneNumber || "No Phone",
         customerEmail: customerEmail,
-        items: cart.map(item => ({ productId: item.id, title: item.title, quantity: item.quantity, pricePaid: item.currentPrice })),
+        items: cart.map(item => ({ 
+          productId: item.id, 
+          title: item.title || item.name, 
+          quantity: item.quantity, 
+          pricePaid: getTierDetails(item).price // ✨ Dynamically locked at checkout
+        })),
         totalAmount: cartTotal, 
-        tierPlacedAt: userTier, 
+        tierPlacedAt: userTier || 'retail', 
         status: 'pending_whatsapp',
         createdAt: serverTimestamp()
       });
 
-      let text = `*New Order from GARV GIFT GALLERY* 🛍️\n`;
+      // 2. Format Professional WhatsApp Receipt
+      let text = `*NEW ORDER FROM GARV GIFT GALLERY* 🛍️\n`;
       text += `*Name:* ${customerName}\n`;
-      text += `*Phone:* ${currentUser.phoneNumber}\n`;
-      text += `*Tier:* ${userTier.toUpperCase()}\n\n`;
-      text += `*Order Details (ID: ${orderRef.id.slice(0, 6).toUpperCase()}):*\n`;
+      text += `*Phone:* ${currentUser.phoneNumber || 'N/A'}\n`;
+      text += `*Tier:* ${(userTier || 'retail').toUpperCase()}\n\n`;
+      text += `*Order ID:* ${orderRef.id.slice(0, 6).toUpperCase()}\n`;
+      text += `---------------------------\n`;
+      
       cart.forEach((item, index) => {
-        text += `${index + 1}. ${item.title}\n   ${item.quantity} pcs x ₹${item.currentPrice} = ₹${item.quantity * item.currentPrice}\n`;
+        const tierInfo = getTierDetails(item);
+        text += `*${index + 1}. ${item.title || item.name}*\n`;
+        text += `Qty: ${item.quantity} (Pack Size: ${item.packSize || 1})\n`;
+        text += `Price: ₹${tierInfo.price} /pc\n`;
+        text += `Subtotal: ₹${item.quantity * tierInfo.price}\n\n`;
       });
-      text += `\n*Estimated Total: ₹${cartTotal}*\n`;
-      text += `\nPlease confirm my order!`;
+      
+      text += `---------------------------\n`;
+      text += `*TOTAL AMOUNT: ₹${cartTotal}*\n`;
+      text += `---------------------------\n`;
+      text += `Please confirm availability and dispatch details.`;
 
       const encodedText = encodeURIComponent(text);
-      // ⚠️ CHANGE THIS TO YOUR ACTUAL WHATSAPP NUMBER
+      // ⚠️ YOUR ACTUAL WHATSAPP NUMBER
       const myWhatsAppNumber = "918851990042"; 
       const whatsappUrl = `https://wa.me/${myWhatsAppNumber}?text=${encodedText}`;
 
+      // 3. Clear cart and send to WhatsApp
       clearCart();
       window.open(whatsappUrl, '_blank'); 
       navigate('/profile'); 
@@ -83,18 +104,20 @@ const Cart = () => {
         {/* Left Side: Compact Items List */}
        <div style={styles.itemList}>
           {cart.map(item => {
-            // ✨ Pull the correct tier MOQ and calculate minimum floor
-            const moq = getTierDetails ? (getTierDetails(item).moq || 1) : (item.moq || 1);
+            // ✨ Smart Cart Engine reads the exact prices and MOQs
+            const tierInfo = getTierDetails(item);
+            const currentPrice = tierInfo.price;
+            const moq = tierInfo.moq || 1;
             const packSize = item.packSize || 1;
             const minQty = Math.max(moq, packSize);
 
             return (
               <div key={item.id} style={styles.cartItem}>
-                <img src={item.images?.[0] || item.image || "https://via.placeholder.com/150"} alt={item.title} style={styles.itemImage} />
+                <img src={item.images?.[0] || item.image || "https://via.placeholder.com/150"} alt={item.title || item.name} style={styles.itemImage} />
                 
                 <div style={styles.itemDetails}>
-                  <h3 style={styles.itemTitle}>{item.title}</h3>
-                  <p style={styles.itemPrice}>₹{item.currentPrice} <span style={styles.unit}>/ pc</span></p>
+                  <h3 style={styles.itemTitle}>{item.title || item.name}</h3>
+                  <p style={styles.itemPrice}>₹{currentPrice} <span style={styles.unit}>/ pc</span></p>
                 </div>
 
                 <div style={styles.actionGroup}>
@@ -133,10 +156,9 @@ const Cart = () => {
         <div style={styles.summaryBox}>
           <h3 style={styles.summaryTitle}>Order Summary</h3>
           
-          {/* ✨ NEW: Centered, Luxurious Tier Badge */}
           <div style={styles.tierContainer}>
             <span style={styles.tierBadge}>
-              {userTier} Partner
+              {userTier || 'Retail'} Partner
             </span>
           </div>
           
@@ -194,26 +216,25 @@ const styles = {
   summaryBox: { flex: '1 1 300px', backgroundColor: '#FAFAFA', padding: '24px', borderRadius: '8px', border: '1px solid #EAEAEA', position: 'sticky', top: '90px' },
   summaryTitle: { margin: '0 0 16px 0', color: '#111', fontSize: '1.05rem', fontWeight: '600', textAlign: 'center' },
   
-  /* ✨ NEW: Luxurious Tier Badge Styling */
   tierContainer: { display: 'flex', justifyContent: 'center', marginBottom: '24px' },
   tierBadge: { 
     padding: '6px 14px', 
     borderRadius: '50px', 
-    border: '1px solid #C5A059', // Elegant Gold Border
-    backgroundColor: '#FFFAF0', // Ultra-faint warm glow
-    color: '#B8860B', // Rich Gold Text
+    border: '1px solid #C5A059', 
+    backgroundColor: '#FFFAF0', 
+    color: '#B8860B', 
     fontSize: '0.75rem', 
     fontWeight: '700', 
     letterSpacing: '1px', 
     textTransform: 'uppercase',
-    boxShadow: '0 2px 8px rgba(197, 160, 89, 0.1)' // Soft gold shadow
+    boxShadow: '0 2px 8px rgba(197, 160, 89, 0.1)' 
   },
 
   summaryRow: { display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '0.9rem', color: '#444' },
   totalRow: { display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #EAEAEA', paddingTop: '12px', marginTop: '12px', fontSize: '1.1rem', color: '#111', fontWeight: '600' },
   
   checkoutBtn: { width: '100%', backgroundColor: '#111', color: '#FFF', padding: '12px', border: 'none', borderRadius: '6px', fontWeight: '500', fontSize: '0.95rem', cursor: 'pointer', textAlign: 'center', transition: 'background 0.2s', textDecoration: 'none', boxSizing: 'border-box' },
-  disclaimer: { fontSize: '0.75rem', color: '#888', textAlign: 'center', marginTop: '16px', lineHeight: '1.4' },
+  disclaimer: { fontSize: '0.75rem', color: '#888', textAlign: 'center', margin: '16px 0 0 0', lineHeight: '1.4' },
   
   emptyState: { textAlign: 'center', padding: '15vh 20px', display: 'flex', flexDirection: 'column', alignItems: 'center' }
 };

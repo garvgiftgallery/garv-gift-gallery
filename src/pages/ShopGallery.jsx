@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
-import { collection, getDocs, query, limit, startAfter } from 'firebase/firestore';
+import React, { useState, useEffect, useMemo } from 'react';
+// ✨ FIXED: Removed orderBy from import as we will handle it client-side
+import { collection, getDocs, query } from 'firebase/firestore';
 import { db } from '../firebase';
 import ProductCard from '../components/ProductCard';
 import { useCart } from '../context/CartContext';
@@ -8,133 +9,167 @@ import { useAuth } from '../context/AuthContext';
 const ShopGallery = () => {
   const [inventory, setInventory] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
+  
+  // Modal & Variant States
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [isZoomed, setIsZoomed] = useState(false);
+  const [activeVariant, setActiveVariant] = useState(null);
   
-  // ✨ NEW: Pagination States
-  const [lastDoc, setLastDoc] = useState(null);
-  const [hasMore, setHasMore] = useState(true);
+  // UI Pagination State
+  const [visibleCount, setVisibleCount] = useState(24); 
+  
+  // Filter & Sort States
+  const [selectedTag, setSelectedTag] = useState('All');
+  const [sortOrder, setSortOrder] = useState('newest');
+  const [isFading, setIsFading] = useState(false);
   
   const { addToCart, getTierDetails, cart, updateQuantity, removeFromCart } = useCart(); 
   const { searchQuery } = useAuth(); 
 
-  // ✨ NEW: Initial Fetch (Only grabs the first 24 products)
+  // Reset variant when modal closes or opens a new product
   useEffect(() => {
-    const fetchInitialProducts = async () => {
+    setActiveVariant(null);
+  }, [selectedProduct]);
+
+  useEffect(() => {
+    setVisibleCount(24);
+  }, [searchQuery, selectedTag, sortOrder]);
+
+  useEffect(() => {
+    const fetchAllProducts = async () => {
       try {
-        const q = query(collection(db, 'products'), limit(24));
+        // ✨ FIXED: Removed orderBy so Firebase doesn't hide older products missing the createdAt field
+        const q = query(collection(db, 'products'));
         const snapshot = await getDocs(q);
         
-        const fetchedProducts = snapshot.docs.map(doc => ({
-          id: doc.id, 
-          title: doc.data().name || doc.data().title || "",             
-          price: doc.data().retail,           
-          image: doc.data().imageUrl, 
-          images: doc.data().images,  
-          wholesalePrice: doc.data().ws || doc.data().wholesalePrice,      
-          bulkPrice: doc.data().bulk || doc.data().bulkPrice,
-          moq: doc.data().moq,
-          packSize: doc.data().packSize,
-          desc: doc.data().desc || "No description provided.",
-          tags: doc.data().cat ? doc.data().cat.split(',').map(t => t.trim()) : [] 
-        }));
+        const fetchedProducts = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id, 
+            title: data.name || data.title || "",             
+            price: data.retail,           
+            image: data.imageUrl, 
+            images: data.images,  
+            wholesalePrice: data.ws || data.wholesalePrice,      
+            bulkPrice: data.bulk || data.bulkPrice,
+            moq: data.moq,
+            packSize: data.packSize,
+            desc: data.desc || "No description provided.",
+            tags: data.cat ? data.cat.split(',').map(t => t.trim()) : [],
+            variants: data.variants || [],
+            variantLabel: data.variantLabel || 'Options',
+            // ✨ FIXED: Safely grab createdAt, fallback to 0 for old products
+            createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : 0 
+          };
+        });
 
         setInventory(fetchedProducts);
-        
-        // Save the bookmark for the next batch
-        setLastDoc(snapshot.docs[snapshot.docs.length - 1]);
-        // If we got exactly 24, there might be more. If less, we hit the end.
-        setHasMore(snapshot.docs.length === 24); 
-
       } catch (error) {
         console.error("Error fetching products: ", error);
       } finally {
         setLoading(false);
       }
     };
-    fetchInitialProducts();
+    fetchAllProducts();
   }, []);
 
-  // ✨ NEW: Load More Function (Grabs the next 24)
-  const loadMoreProducts = async () => {
-    if (!lastDoc) return;
-    setLoadingMore(true);
-    
-    try {
-      const q = query(collection(db, 'products'), startAfter(lastDoc), limit(24));
-      const snapshot = await getDocs(q);
+  const uniqueTags = useMemo(() => {
+    const allTags = inventory.flatMap(p => p.tags || []);
+    const validTags = allTags.filter(tag => tag && tag.trim() !== '');
+    return ['All', ...new Set(validTags)];
+  }, [inventory]);
+
+  useEffect(() => {
+    setIsFading(true);
+    const timer = setTimeout(() => setIsFading(false), 250);
+    return () => clearTimeout(timer);
+  }, [selectedTag, sortOrder, searchQuery]);
+
+  const processedInventory = useMemo(() => {
+    let filtered = inventory.filter((product) => {
+      const q = (searchQuery || "").toLowerCase();
+      const matchesSearch = !q || 
+        (product.title || "").toLowerCase().includes(q) || 
+        (product.tags || []).some(t => t.toLowerCase().includes(q));
       
-      const fetchedProducts = snapshot.docs.map(doc => ({
-        id: doc.id, 
-        title: doc.data().name || doc.data().title || "",             
-        price: doc.data().retail,           
-        image: doc.data().imageUrl, 
-        images: doc.data().images,  
-        wholesalePrice: doc.data().ws || doc.data().wholesalePrice,      
-        bulkPrice: doc.data().bulk || doc.data().bulkPrice,
-        moq: doc.data().moq,
-        packSize: doc.data().packSize,
-        desc: doc.data().desc || "No description provided.",
-        tags: doc.data().cat ? doc.data().cat.split(',').map(t => t.trim()) : [] 
-      }));
+      const matchesTag = selectedTag === 'All' || (product.tags || []).includes(selectedTag);
 
-      // Append new products to existing inventory
-      setInventory(prev => [...prev, ...fetchedProducts]);
-      setLastDoc(snapshot.docs[snapshot.docs.length - 1]);
-      setHasMore(snapshot.docs.length === 24);
+      return matchesSearch && matchesTag;
+    });
 
-    } catch (error) {
-      console.error("Error loading more: ", error);
-    } finally {
-      setLoadingMore(false);
-    }
-  };
+    return filtered.sort((a, b) => {
+      if (sortOrder === 'priceAsc') return a.price - b.price;
+      if (sortOrder === 'priceDesc') return b.price - a.price;
+      if (sortOrder === 'nameAsc') return a.title.localeCompare(b.title);
+      // ✨ FIXED: Client-side "Newest" sorting. New items at top, old items at bottom.
+      return b.createdAt - a.createdAt; 
+    });
+  }, [inventory, searchQuery, selectedTag, sortOrder]);
 
-  // Client-side search (Filters the currently loaded chunks)
-  const filteredInventory = inventory.filter((product) => {
-    const q = (searchQuery || "").toLowerCase();
-    if (!q) return true; 
-    
-    const safeTitle = (product.title || "").toLowerCase();
-    const matchesTitle = safeTitle.includes(q);
-    const matchesTags = (product.tags || []).some(tag => 
-      (tag || "").toLowerCase().includes(q)
-    );
-    
-    return matchesTitle || matchesTags;
-  });
 
   if (loading) return <div style={styles.emptyState}>Loading Catalogue...</div>;
 
   return (
-    <div style={{ paddingBottom: '40px' }}>
-      {filteredInventory.length === 0 ? (
-        <div style={styles.emptyState}>No products found matching "{searchQuery}"</div>
+    <div style={{ paddingBottom: '40px', position: 'relative' }}>
+      
+      {/* Sticky Control Bar */}
+      <div style={styles.stickyControlBar}>
+        <div style={styles.tagScroller} className="hide-scrollbar">
+          {uniqueTags.map(tag => (
+            <button 
+              key={tag}
+              onClick={() => setSelectedTag(tag)}
+              style={{
+                ...styles.pill,
+                ...(selectedTag === tag ? styles.pillActive : styles.pillInactive)
+              }}
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
+
+        <div style={styles.sortContainer}>
+          <select 
+            value={sortOrder} 
+            onChange={(e) => setSortOrder(e.target.value)}
+            style={styles.sortSelect}
+          >
+            <option value="newest">Featured</option>
+            <option value="nameAsc">A - Z</option>
+            <option value="priceAsc">Price: Low to High</option>
+            <option value="priceDesc">Price: High to Low</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Product Grid */}
+      {processedInventory.length === 0 ? (
+        <div style={styles.emptyState}>No products found.</div>
       ) : (
         <>
-          <div style={styles.grid}>
-            {filteredInventory.map((product) => (
+          <div style={{
+            ...styles.grid, 
+            opacity: isFading ? 0 : 1, 
+            transform: isFading ? 'translateY(10px)' : 'translateY(0)',
+            transition: 'opacity 0.25s ease-out, transform 0.25s ease-out' 
+          }}>
+            {processedInventory.slice(0, visibleCount).map((product) => (
               <ProductCard key={product.id} productData={product} onOpenModal={setSelectedProduct} />
             ))}
           </div>
 
-          {/* ✨ NEW: The Load More Button */}
-          {hasMore && !searchQuery && (
+          {visibleCount < processedInventory.length && (
             <div style={styles.loadMoreContainer}>
-              <button 
-                onClick={loadMoreProducts} 
-                style={styles.loadMoreBtn} 
-                disabled={loadingMore}
-              >
-                {loadingMore ? 'Loading...' : 'Load More Products'}
+              <button onClick={() => setVisibleCount(prev => prev + 24)} style={styles.loadMoreBtn}>
+                Load More Products
               </button>
             </div>
           )}
         </>
       )}
 
-      {/* Modal Code remains exactly the same! */}
+      {/* PRODUCT MODAL */}
       {selectedProduct && (
         <div style={styles.modalOverlay} onClick={() => { setSelectedProduct(null); setIsZoomed(false); }}>
           <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
@@ -144,7 +179,10 @@ const ShopGallery = () => {
               <div style={styles.leftColumn}>
                 <div style={styles.modalImageSection}>
                    <div style={styles.scroller}>
-                      {(selectedProduct.images || (selectedProduct.image ? [selectedProduct.image] : [])).map((imgUrl, idx) => (
+                      {(selectedProduct.images && selectedProduct.images.length > 0 
+                          ? selectedProduct.images 
+                          : (selectedProduct.image ? [selectedProduct.image] : [])
+                      ).map((imgUrl, idx) => (
                         <div key={idx} style={styles.modalImageWrapper}>
                           <div style={{ ...styles.auraBackground, backgroundImage: `url(${imgUrl})` }} />
                           <img 
@@ -163,9 +201,32 @@ const ShopGallery = () => {
               <div style={styles.modalDetails}>
                 <div>
                   <h2 style={styles.modalTitle}>{selectedProduct.title || "Unnamed Product"}</h2>
-                  <h3 style={styles.modalPrice}>₹{getTierDetails(selectedProduct).price} <span style={styles.unit}>/ pc</span></h3>
+                  <h3 style={styles.modalPrice}>
+                    ₹{getTierDetails(selectedProduct, activeVariant).price} 
+                    <span style={styles.unit}>/ pc</span>
+                  </h3>
                 </div>
                 
+                {selectedProduct.variants && selectedProduct.variants.length > 0 && (
+                  <div style={styles.variantContainer}>
+                    <p style={styles.variantLabel}>Select {selectedProduct.variantLabel}:</p>
+                    <div style={styles.variantGrid}>
+                      {selectedProduct.variants.map((variant, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => setActiveVariant(variant)}
+                          style={{
+                            ...styles.variantPill,
+                            ...(activeVariant?.name === variant.name ? styles.variantPillActive : styles.variantPillInactive)
+                          }}
+                        >
+                          {variant.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div style={styles.tagsBox}>
                   {(selectedProduct.tags || []).map((tag, i) => (
                     <span key={i} style={styles.tag}>#{tag}</span>
@@ -177,32 +238,42 @@ const ShopGallery = () => {
                 </div>
                 
                 <div style={styles.moqRow}>
-                  <span>Min. Order: {getTierDetails(selectedProduct).moq || 1}</span>
+                  <span>Min. Order: {getTierDetails(selectedProduct, activeVariant).moq || 1}</span>
                   <span>Pack Size: {selectedProduct.packSize || 1}</span>
                 </div>
 
                 {(() => {
-                  const itemInCart = cart.find(item => item.id === selectedProduct.id);
-                  const moq = getTierDetails(selectedProduct).moq || 1;
-                  const packSize = selectedProduct.packSize || 1;
-                  const minQty = Math.max(moq, packSize); 
+                  const hasVariants = selectedProduct.variants && selectedProduct.variants.length > 0;
+                  if (hasVariants && !activeVariant) {
+                    return (
+                      <button style={{...styles.modalAddButton, opacity: 0.5, cursor: 'not-allowed'}} disabled>
+                        Select an Option
+                      </button>
+                    );
+                  }
+
+                  const cartItemId = hasVariants ? `${selectedProduct.id}-${activeVariant.name}` : selectedProduct.id;
+                  const itemInCart = cart.find(item => item.cartItemId === cartItemId);
+                  
+                  const tierInfo = getTierDetails(selectedProduct, activeVariant);
+                  const minQty = Math.max(tierInfo.moq || 1, selectedProduct.packSize || 1); 
 
                   if (itemInCart) {
                     return (
                       <div style={styles.amazonPill}>
                         <button 
                           onClick={() => {
-                            const newQty = itemInCart.quantity - packSize;
-                            if (newQty < minQty) removeFromCart(itemInCart.id);
-                            else updateQuantity(itemInCart.id, newQty);
+                            const newQty = itemInCart.quantity - (selectedProduct.packSize || 1);
+                            if (newQty < minQty) removeFromCart(itemInCart.cartItemId);
+                            else updateQuantity(itemInCart.cartItemId, newQty);
                           }}
                           style={styles.pillBtn}
                         >
-                          {itemInCart.quantity - packSize < minQty ? '🗑️' : '−'}
+                          {itemInCart.quantity - (selectedProduct.packSize || 1) < minQty ? '🗑️' : '−'}
                         </button>
                         <span style={styles.pillQty}>{itemInCart.quantity}</span>
                         <button 
-                          onClick={() => updateQuantity(itemInCart.id, itemInCart.quantity + packSize)}
+                          onClick={() => updateQuantity(itemInCart.cartItemId, itemInCart.quantity + (selectedProduct.packSize || 1))}
                           style={styles.pillBtn}
                         >
                           +
@@ -211,7 +282,7 @@ const ShopGallery = () => {
                     );
                   } else {
                     return (
-                      <button style={styles.modalAddButton} onClick={() => addToCart(selectedProduct, minQty)}>
+                      <button style={styles.modalAddButton} onClick={() => addToCart(selectedProduct, minQty, activeVariant)}>
                         Add to Cart
                       </button>
                     );
@@ -228,9 +299,20 @@ const ShopGallery = () => {
 };
 
 const styles = {
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '16px' },
-  
-  /* ✨ NEW: Load More Button Styles */
+  stickyControlBar: {
+    position: 'sticky', top: '16px', zIndex: 40, backgroundColor: 'rgba(255, 255, 255, 0.85)',
+    backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(212, 175, 55, 0.4)',
+    borderRadius: '50px', padding: '8px 16px', margin: '0 16px 24px 16px', display: 'flex',
+    justifyContent: 'space-between', alignItems: 'center', gap: '16px', boxShadow: '0 10px 40px rgba(0,0,0,0.08)'
+  },
+  tagScroller: { display: 'flex', gap: '8px', overflowX: 'auto', scrollbarWidth: 'none', msOverflowStyle: 'none', flex: '1 1 auto', alignItems: 'center' },
+  pill: { padding: '8px 20px', borderRadius: '50px', fontSize: '0.8rem', fontWeight: '700', whiteSpace: 'nowrap', cursor: 'pointer', transition: 'all 0.3s ease', textTransform: 'uppercase', letterSpacing: '0.5px' },
+  pillActive: { backgroundColor: '#D4AF37', color: '#FFF', border: '1px solid #D4AF37', boxShadow: '0 4px 12px rgba(212, 175, 55, 0.3)' },
+  pillInactive: { backgroundColor: 'transparent', color: '#666', border: '1px solid transparent' },
+  sortContainer: { flex: '0 0 auto' },
+  sortSelect: { padding: '8px 16px', borderRadius: '50px', border: '1px solid #EAEAEA', backgroundColor: '#F9F8F6', fontSize: '0.8rem', fontWeight: '600', color: '#111', cursor: 'pointer', outline: 'none' },
+
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '16px', padding: '0 16px' },
   loadMoreContainer: { display: 'flex', justifyContent: 'center', marginTop: '32px' },
   loadMoreBtn: { backgroundColor: '#FFF', color: '#111', border: '1px solid #EAEAEA', padding: '12px 32px', borderRadius: '50px', fontSize: '0.9rem', fontWeight: '600', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' },
   
@@ -252,6 +334,13 @@ const styles = {
   modalPrice: { margin: '4px 0 0 0', color: '#111', fontSize: '1.4rem', fontWeight: '700' },
   unit: { fontSize: '0.85rem', color: '#666', fontWeight: '400' },
   
+  variantContainer: { backgroundColor: '#FFF', border: '1px solid #EAEAEA', padding: '12px', borderRadius: '6px' },
+  variantLabel: { margin: '0 0 8px 0', fontSize: '0.75rem', fontWeight: '700', color: '#666', textTransform: 'uppercase' },
+  variantGrid: { display: 'flex', flexWrap: 'wrap', gap: '8px' },
+  variantPill: { padding: '6px 12px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: '600', cursor: 'pointer', transition: 'all 0.2s border' },
+  variantPillActive: { backgroundColor: '#F9F8F6', color: '#D4AF37', border: '2px solid #D4AF37' },
+  variantPillInactive: { backgroundColor: '#FAFAFA', color: '#444', border: '1px solid #EAEAEA' },
+
   tagsBox: { display: 'flex', flexWrap: 'wrap', gap: '6px' },
   tag: { backgroundColor: '#FAFAFA', border: '1px solid #EAEAEA', padding: '4px 10px', borderRadius: '4px', fontSize: '0.75rem', color: '#444' },
   

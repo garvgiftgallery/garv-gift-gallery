@@ -8,6 +8,9 @@ const ProductCard = ({ productData, onOpenModal }) => {
   const currentPricing = getTierDetails(productData);
   const imageArray = productData.images || (productData.image ? [productData.image] : []);
 
+  // ✨ THE FIX: Check if this specific product has variants
+  const hasVariants = productData.variants && productData.variants.length > 0;
+
   return (
     <div style={styles.card}>
       <div style={styles.imageContainer} onClick={() => onOpenModal(productData)}>
@@ -42,7 +45,24 @@ const ProductCard = ({ productData, onOpenModal }) => {
         </div>
 
         {(() => {
-          const itemInCart = cart.find(item => item.id === productData.id);
+          // ✨ THE FIX: If it has variants, force the user to open the modal.
+          if (hasVariants) {
+            return (
+              <button 
+                style={styles.variantButton} 
+                onClick={(e) => { 
+                  e.stopPropagation(); 
+                  onOpenModal(productData); // Opens the modal instead of adding to cart
+                }}
+              >
+                Select Option
+              </button>
+            );
+          }
+
+          // Normal logic for standard products without variants
+          // Note: We check against cartItemId to sync with the Sprint 4.5 engine upgrade
+          const itemInCart = cart.find(item => item.cartItemId === productData.id || item.id === productData.id);
           const moq = currentPricing.moq || 1;
           const packSize = productData.packSize || 1;
           const minQty = Math.max(moq, packSize); 
@@ -54,8 +74,9 @@ const ProductCard = ({ productData, onOpenModal }) => {
                   onClick={(e) => {
                     e.stopPropagation();
                     const newQty = itemInCart.quantity - packSize;
-                    if (newQty < minQty) removeFromCart(itemInCart.id);
-                    else updateQuantity(itemInCart.id, newQty);
+                    const idToUse = itemInCart.cartItemId || itemInCart.id;
+                    if (newQty < minQty) removeFromCart(idToUse);
+                    else updateQuantity(idToUse, newQty);
                   }}
                   style={styles.pillBtn}
                 >
@@ -65,7 +86,8 @@ const ProductCard = ({ productData, onOpenModal }) => {
                 <button 
                   onClick={(e) => {
                     e.stopPropagation();
-                    updateQuantity(itemInCart.id, itemInCart.quantity + packSize);
+                    const idToUse = itemInCart.cartItemId || itemInCart.id;
+                    updateQuantity(idToUse, itemInCart.quantity + packSize);
                   }}
                   style={styles.pillBtn}
                 >
@@ -113,6 +135,9 @@ const styles = {
   
   button: { width: '100%', backgroundColor: '#111', color: '#FFF', border: 'none', padding: '0', borderRadius: '4px', fontWeight: '500', fontSize: '0.9rem', cursor: 'pointer', marginTop: '4px', height: '36px', transition: 'background 0.2s' },
   
+  // ✨ THE FIX: Styling for the interceptor button
+  variantButton: { width: '100%', backgroundColor: '#F9F8F6', color: '#111', border: '1px solid #D1D5DB', padding: '0', borderRadius: '4px', fontWeight: '600', fontSize: '0.9rem', cursor: 'pointer', marginTop: '4px', height: '36px', transition: 'all 0.2s' },
+
   amazonPill: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: '1px solid #D1D5DB', borderRadius: '4px', padding: '0', backgroundColor: '#FFF', marginTop: '4px', height: '36px', boxSizing: 'border-box' },
   pillBtn: { background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: '#111', width: '32px', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   pillQty: { fontWeight: '600', fontSize: '0.95rem', color: '#111', minWidth: '24px', textAlign: 'center' },
