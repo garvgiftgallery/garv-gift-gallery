@@ -7,33 +7,31 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
+      includeAssets: ['assets/logo.png', 'assets/logo-192.png', 'assets/logo-512.png'],
       manifest: {
-        name: 'Garv Gift Gallery',
-        short_name: 'Garv Gift',
-        description: 'B2B & B2C Premium Gift Catalogue',
-        theme_color: '#111111',
-        background_color: '#ffffff',
-        display: 'standalone',
+        short_name: "Garv Gift Gallery",
+        name: "Garv Gift Gallery B2B Portal",
+        description: "Exclusive B2B portal for premium gifts and bulk corporate gifting.",
+        theme_color: "#111111",
+        background_color: "#F9F8F6",
+        display: "standalone",
         icons: [
           {
-            src: 'pwa-192x192.png',
+            src: '/assets/logo-192.png', 
             sizes: '192x192',
             type: 'image/png'
           },
           {
-            src: 'pwa-512x512.png',
+            src: '/assets/logo-512.png', 
             sizes: '512x512',
             type: 'image/png'
-          },
-          {
-            src: 'pwa-512x512.png',
-            sizes: '512x512',
-            type: 'image/png',
-            purpose: 'any maskable'
           }
         ]
+      },
+      // ✨ THE FIX: Force the PWA plugin to generate the manifest during local dev
+      devOptions: {
+        enabled: true
       }
     })
-  ]
+  ],
 });

@@ -7,12 +7,13 @@ const ProductCard = ({ productData, onOpenModal }) => {
   
   const currentPricing = getTierDetails(productData);
   const imageArray = productData.images || (productData.image ? [productData.image] : []);
-
-  // ✨ THE FIX: Check if this specific product has variants
   const hasVariants = productData.variants && productData.variants.length > 0;
+  
+  // ✨ STOCK CHECK ENGINE
+  const isOutOfStock = productData.stock <= 0;
 
   return (
-    <div style={styles.card}>
+    <div style={{...styles.card, opacity: isOutOfStock ? 0.7 : 1}}>
       <div style={styles.imageContainer} onClick={() => onOpenModal(productData)}>
         
         {imageArray.length === 0 ? (
@@ -28,13 +29,21 @@ const ProductCard = ({ productData, onOpenModal }) => {
           </div>
         )}
         
-        {isPremiumTier && currentPricing.label && (
+        {/* ✨ Out of Stock Overlay Badge */}
+        {isOutOfStock && (
+           <div style={styles.outOfStockBadge}>OUT OF STOCK</div>
+        )}
+
+        {!isOutOfStock && isPremiumTier && currentPricing.label && (
           <div style={styles.badge}>{currentPricing.label}</div>
         )}
       </div>
 
       <div style={styles.info}>
-        <h3 style={styles.title} onClick={() => onOpenModal(productData)}>{productData.title || "Unnamed Product"}</h3>
+        {/* Support both 'title' and 'name' for seamless backward compatibility */}
+        <h3 style={styles.title} onClick={() => onOpenModal(productData)}>
+          {productData.title || productData.name || "Unnamed Product"}
+        </h3>
         
         <p style={styles.price}>₹{currentPricing.price} <span style={styles.unit}>/ pc</span></p>
         
@@ -45,14 +54,19 @@ const ProductCard = ({ productData, onOpenModal }) => {
         </div>
 
         {(() => {
-          // ✨ THE FIX: If it has variants, force the user to open the modal.
+          // ✨ THE FIX: Lock out the button if stock is 0
+          if (isOutOfStock) {
+             return <button style={styles.disabledButton} disabled>Out of Stock</button>;
+          }
+
+          // Force variant modal if options exist
           if (hasVariants) {
             return (
               <button 
                 style={styles.variantButton} 
                 onClick={(e) => { 
                   e.stopPropagation(); 
-                  onOpenModal(productData); // Opens the modal instead of adding to cart
+                  onOpenModal(productData); 
                 }}
               >
                 Select Option
@@ -60,8 +74,7 @@ const ProductCard = ({ productData, onOpenModal }) => {
             );
           }
 
-          // Normal logic for standard products without variants
-          // Note: We check against cartItemId to sync with the Sprint 4.5 engine upgrade
+          // Standard Add to Cart logic
           const itemInCart = cart.find(item => item.cartItemId === productData.id || item.id === productData.id);
           const moq = currentPricing.moq || 1;
           const packSize = productData.packSize || 1;
@@ -116,13 +129,16 @@ const ProductCard = ({ productData, onOpenModal }) => {
 };
 
 const styles = {
-  card: { backgroundColor: '#FFF', borderRadius: '8px', border: '1px solid #EAEAEA', overflow: 'hidden', display: 'flex', flexDirection: 'column', transition: 'border-color 0.2s' },
+  card: { backgroundColor: '#FFF', borderRadius: '8px', border: '1px solid #EAEAEA', overflow: 'hidden', display: 'flex', flexDirection: 'column', transition: 'all 0.2s' },
   imageContainer: { height: '180px', backgroundColor: '#FAFAFA', position: 'relative', cursor: 'pointer', borderBottom: '1px solid #EAEAEA', overflow: 'hidden' },
   scroller: { display: 'flex', overflowX: 'auto', scrollSnapType: 'x mandatory', width: '100%', height: '100%', scrollbarWidth: 'none' },
   imageWrapper: { flex: '0 0 100%', width: '100%', height: '100%', position: 'relative', scrollSnapAlign: 'start', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   auraBackground: { position: 'absolute', top: '-10%', left: '-10%', right: '-10%', bottom: '-10%', backgroundSize: 'cover', backgroundPosition: 'center', filter: 'blur(10px)', opacity: 0.3, zIndex: 0 },
   image: { width: '80%', height: '80%', objectFit: 'contain', zIndex: 1, position: 'relative', borderRadius: '4px' },
+  
+  // ✨ NEW: Badges
   badge: { position: 'absolute', top: '8px', right: '8px', backgroundColor: '#111', color: '#FFF', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: '600', zIndex: 2, letterSpacing: '0.5px' },
+  outOfStockBadge: { position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', backgroundColor: 'rgba(200,0,0,0.85)', color: '#FFF', padding: '6px 12px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: '700', zIndex: 5, letterSpacing: '1px', whiteSpace: 'nowrap' },
   
   info: { padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 },
   title: { margin: 0, fontSize: '0.95rem', color: '#111', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
@@ -133,9 +149,9 @@ const styles = {
   moqItem: { flex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.7rem', color: '#666' },
   divider: { width: '1px', backgroundColor: '#EAEAEA', margin: '0 8px' },
   
+  // ✨ NEW: Button styles
   button: { width: '100%', backgroundColor: '#111', color: '#FFF', border: 'none', padding: '0', borderRadius: '4px', fontWeight: '500', fontSize: '0.9rem', cursor: 'pointer', marginTop: '4px', height: '36px', transition: 'background 0.2s' },
-  
-  // ✨ THE FIX: Styling for the interceptor button
+  disabledButton: { width: '100%', backgroundColor: '#EAEAEA', color: '#999', border: 'none', padding: '0', borderRadius: '4px', fontWeight: '600', fontSize: '0.9rem', cursor: 'not-allowed', marginTop: '4px', height: '36px' },
   variantButton: { width: '100%', backgroundColor: '#F9F8F6', color: '#111', border: '1px solid #D1D5DB', padding: '0', borderRadius: '4px', fontWeight: '600', fontSize: '0.9rem', cursor: 'pointer', marginTop: '4px', height: '36px', transition: 'all 0.2s' },
 
   amazonPill: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: '1px solid #D1D5DB', borderRadius: '4px', padding: '0', backgroundColor: '#FFF', marginTop: '4px', height: '36px', boxSizing: 'border-box' },

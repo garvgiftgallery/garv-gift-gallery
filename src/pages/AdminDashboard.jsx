@@ -56,9 +56,10 @@ const AdminDashboard = () => {
   const openDrawer = (type, item = null) => {
     setDrawerType(type);
     if (type === 'product') {
+      // ✨ ADDED: stock, category, tagsInput fields
       setSelectedItem(item || { 
         name: '', retail: 0, ws: 0, bulk: 0, retailMoq: 1, wsMoq: 1, bulkMoq: 1, 
-        packSize: 1, cat: '', desc: '', images: [], variantLabel: '', variants: [] 
+        packSize: 1, stock: 100, category: '', tagsInput: '', desc: '', images: [], variantLabel: '', variants: [] 
       });
     } else if (type === 'customer') {
       setSelectedItem(item || { name: '', email: '', phone: '', tier: 'retail', status: 'active' });
@@ -151,10 +152,17 @@ const AdminDashboard = () => {
     try {
       const validVariants = (selectedItem.variants || []).filter(v => v.name && v.name.trim() !== '');
       
+      // ✨ ADDED: Parse tags from comma separated string
+      const tagsArray = selectedItem.tagsInput 
+        ? selectedItem.tagsInput.split(',').map(t => DOMPurify.sanitize(t.trim())).filter(t => t) 
+        : (selectedItem.tags || []);
+
       const productData = {
         name: DOMPurify.sanitize(selectedItem.name || ''),
         desc: DOMPurify.sanitize(selectedItem.desc || ''),
-        cat: DOMPurify.sanitize(selectedItem.cat || ''),
+        category: DOMPurify.sanitize(selectedItem.category || selectedItem.cat || ''), // ✨ ADDED: Main category
+        tags: tagsArray, // ✨ ADDED: Hidden search array
+        stock: Number(selectedItem.stock) || 0, // ✨ ADDED: Stock
         retail: Number(selectedItem.retail) || 0,
         ws: Number(selectedItem.ws) || 0,
         bulk: Number(selectedItem.bulk) || 0,
@@ -165,7 +173,6 @@ const AdminDashboard = () => {
         images: selectedItem.images || [], 
         
         variantLabel: validVariants.length > 0 ? DOMPurify.sanitize(selectedItem.variantLabel || 'Option') : '',
-        // ✨ NEW: Saving variant-specific prices. If empty, save as null (falls back to base price later)
         variants: validVariants.map(v => ({ 
           name: DOMPurify.sanitize(v.name.trim()),
           retail: v.retail ? Number(v.retail) : null,
@@ -228,7 +235,6 @@ const AdminDashboard = () => {
   const handleAddVariant = () => {
     setSelectedItem(prev => ({ 
       ...prev, 
-      // Added pricing fields to local state
       variants: [...(prev.variants || []), { name: '', retail: '', ws: '', bulk: '' }] 
     }));
   };
@@ -267,6 +273,8 @@ const AdminDashboard = () => {
             const docRef = existingProduct ? doc(db, 'products', existingProduct.id) : doc(collection(db, 'products')); 
             
             const imageArray = row.imageUrl || row.image ? [DOMPurify.sanitize(row.imageUrl || row.image)] : [];
+            // ✨ ADDED: Parse tags and category
+            const tagsArray = row.tags ? row.tags.split(',').map(t => DOMPurify.sanitize(t.trim())).filter(t => t) : [];
 
             batch.set(docRef, {
               name: safeTitle,
@@ -277,8 +285,10 @@ const AdminDashboard = () => {
               wsMoq: Number(row.wsMoq || row.moq) || 1,
               bulkMoq: Number(row.bulkMoq || row.moq) || 1,
               packSize: Number(row.packSize) || 1,
+              stock: Number(row.stock) || 0, // ✨ ADDED: Read stock from CSV
               desc: DOMPurify.sanitize(row.desc || row.description || ""),
-              cat: DOMPurify.sanitize(row.cat || row.tags || ""),
+              category: DOMPurify.sanitize(row.category || row.cat || ""), // ✨ ADDED
+              tags: tagsArray, // ✨ ADDED
               images: imageArray, 
             }, { merge: true }); 
             count++;
@@ -308,7 +318,8 @@ const AdminDashboard = () => {
 
   const exportProducts = () => {
     const exportData = products.map(p => ({
-      ID: p.id, Name: p.name, Category: p.cat, Retail_Price: p.retail, WS_Price: p.ws, Bulk_Price: p.bulk,
+      ID: p.id, Name: p.name, Category: p.category || p.cat, Tags: (p.tags || []).join(', '), Stock: p.stock || 0,
+      Retail_Price: p.retail, WS_Price: p.ws, Bulk_Price: p.bulk,
       Retail_MOQ: p.retailMoq, WS_MOQ: p.wsMoq, Bulk_MOQ: p.bulkMoq, Pack_Size: p.packSize,
       Description: p.desc, 
       Variant_Label: p.variantLabel || '',
@@ -325,9 +336,14 @@ const AdminDashboard = () => {
     handleExportCSV(exportData, 'GARV_Customers');
   };
 
-  // --- Filtering ---
+  // --- ✨ UPDATED Filtering (Includes tags) ---
   const filteredProducts = products
-    .filter(p => (p.name || '').toLowerCase().includes(searchQuery.toLowerCase()) || (p.cat || '').toLowerCase().includes(searchQuery.toLowerCase()))
+    .filter(p => {
+      const q = searchQuery.toLowerCase();
+      return (p.name || '').toLowerCase().includes(q) || 
+             (p.category || p.cat || '').toLowerCase().includes(q) ||
+             (p.tags || []).some(t => t.toLowerCase().includes(q));
+    })
     .sort((a, b) => {
       if (sortBy === 'priceAsc') return a.retail - b.retail;
       if (sortBy === 'priceDesc') return b.retail - a.retail;
@@ -397,21 +413,24 @@ const AdminDashboard = () => {
 
           <div className={viewMode === 'grid' ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" : "flex flex-col gap-2"}>
             {filteredProducts.map(product => (
-              <div key={product.id} onClick={() => openDrawer('product', product)} className={`bg-white rounded-xl border border-gray-100 shadow-sm hover:border-[#D4AF37] transition flex cursor-pointer ${viewMode === 'grid' ? 'flex-col p-4' : 'flex-row justify-between items-center p-3'}`}>
+              // ✨ ADDED: Opacity change if out of stock
+              <div key={product.id} onClick={() => openDrawer('product', product)} className={`bg-white rounded-xl border border-gray-100 shadow-sm hover:border-[#D4AF37] transition flex cursor-pointer ${viewMode === 'grid' ? 'flex-col p-4' : 'flex-row justify-between items-center p-3'} ${product.stock <= 0 ? 'opacity-60' : ''}`}>
                 <div className="flex items-center gap-4 flex-1">
                   {viewMode === 'list' && (
-                    <div className="w-12 h-12 bg-gray-100 rounded-md overflow-hidden flex-shrink-0">
+                    <div className="w-12 h-12 bg-gray-100 rounded-md overflow-hidden flex-shrink-0 relative">
                       {product.images && product.images.length > 0 ? <img src={product.images[0]} alt={product.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-gray-400 text-xs">No Img</div>}
                     </div>
                   )}
                   <div>
-                    <h4 className="font-bold text-gray-900 line-clamp-1">
+                    <h4 className="font-bold text-gray-900 line-clamp-1 flex items-center gap-2">
                       {product.name || 'Unnamed'} 
-                      {product.variants?.length > 0 && <span className="ml-2 text-[9px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200">+{product.variants.length} Options</span>}
+                      {product.variants?.length > 0 && <span className="text-[9px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200">+{product.variants.length} Options</span>}
+                      {/* ✨ ADDED: Out of Stock Badge */}
+                      {product.stock <= 0 && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded border border-red-200 font-bold tracking-wider">OUT OF STOCK</span>}
                     </h4>
                     <div className="flex items-center gap-2 mt-1">
-                      <span className="text-[10px] bg-[#F9F8F6] border border-[#D4AF37] px-2 py-0.5 rounded text-[#D4AF37] font-bold uppercase tracking-wider">{product.cat || 'UNTAGGED'}</span>
-                      {viewMode === 'list' && <span className="text-xs text-gray-500">Retail: ₹{product.retail} | WS: ₹{product.ws}</span>}
+                      <span className="text-[10px] bg-[#F9F8F6] border border-[#D4AF37] px-2 py-0.5 rounded text-[#D4AF37] font-bold uppercase tracking-wider">{product.category || product.cat || 'UNTAGGED'}</span>
+                      {viewMode === 'list' && <span className="text-xs text-gray-500">Retail: ₹{product.retail} | WS: ₹{product.ws} | Stock: {product.stock || 0}</span>}
                     </div>
                   </div>
                 </div>
@@ -420,6 +439,7 @@ const AdminDashboard = () => {
                      <div className="flex flex-col">
                        <span className="text-xs text-gray-500">Retail: ₹{product.retail}</span>
                        <span className="text-xs text-gray-500">WS: ₹{product.ws}</span>
+                       <span className="text-xs font-semibold text-gray-700">Stock: {product.stock || 0}</span>
                      </div>
                   )}
                   <span className="text-xs bg-gray-100 text-gray-700 px-3 py-1.5 rounded-md font-semibold">Edit</span>
@@ -669,10 +689,23 @@ const AdminDashboard = () => {
                     </div>
                   </div>
 
+                  {/* ✨ ADDED: Category & Stock Grid */}
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Category / Tag</label>
-                      <input type="text" placeholder="e.g. Hot Selling" value={selectedItem?.cat} onChange={e => setSelectedItem({...selectedItem, cat: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" />
+                      <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Main Category (Pill)</label>
+                      <input type="text" placeholder="e.g. Lamps" value={selectedItem?.category || selectedItem?.cat || ''} onChange={e => setSelectedItem({...selectedItem, category: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Stock Qty</label>
+                      <input required type="number" min="0" value={selectedItem?.stock} onChange={e => setSelectedItem({...selectedItem, stock: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" />
+                    </div>
+                  </div>
+
+                  {/* ✨ ADDED: Tags & Pack Size Grid */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Tags (Comma Separated)</label>
+                      <input type="text" placeholder="e.g. brass, gift, diwali" value={selectedItem?.tagsInput || (selectedItem?.tags ? selectedItem.tags.join(', ') : '')} onChange={e => setSelectedItem({...selectedItem, tagsInput: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none text-sm" />
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Pack Size</label>
