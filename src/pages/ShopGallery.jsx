@@ -12,7 +12,6 @@ const ShopGallery = () => {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [activeVariant, setActiveVariant] = useState(null);
   
-  // ✨ DRAGGABLE ZOOM STATES
   const [isZoomed, setIsZoomed] = useState(false);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
@@ -24,7 +23,11 @@ const ShopGallery = () => {
   const [isFading, setIsFading] = useState(false);
   
   const { addToCart, getTierDetails, cart, updateQuantity, removeFromCart } = useCart(); 
-  const { searchQuery } = useAuth(); 
+  // ✨ ADDED: Pull userTier
+  const { searchQuery, userTier } = useAuth(); 
+
+  // ✨ NEW: Internal Team Check
+  const isInternalTeam = ['admin', 'staff', 'management'].includes(userTier);
 
   useEffect(() => {
     setActiveVariant(null);
@@ -51,13 +54,13 @@ const ShopGallery = () => {
             image: data.imageUrl, 
             images: data.images,  
             stock: data.stock || 0,
-            wholesalePrice: data.ws || data.wholesalePrice,      
-            bulkPrice: data.bulk || data.bulkPrice,
+            ws: data.ws || data.wholesalePrice, // Mapping standard names     
+            bulk: data.bulk || data.bulkPrice,  // Mapping standard names
             moq: data.moq,
             packSize: data.packSize,
             desc: data.desc || "No description provided.",
             category: data.category || data.cat || '', 
-            tags: data.tags || [], // Hidden search array
+            tags: data.tags || [], 
             variants: data.variants || [],
             variantLabel: data.variantLabel || 'Options',
             createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : 0 
@@ -73,7 +76,6 @@ const ShopGallery = () => {
     fetchAllProducts();
   }, []);
 
-  // ✨ CATEGORY PILLS (Ignore hidden tags)
   const uniqueCategories = useMemo(() => {
     const allCats = inventory.map(p => p.category);
     const validCats = allCats.filter(cat => cat && cat.trim() !== '');
@@ -86,7 +88,6 @@ const ShopGallery = () => {
     return () => clearTimeout(timer);
   }, [selectedCategory, sortOrder, searchQuery]);
 
-  // ✨ DRAG LOGIC HANDLERS
   const handlePointerDown = (e) => {
     if (!isZoomed) return;
     setIsDragging(true);
@@ -97,7 +98,7 @@ const ShopGallery = () => {
 
   const handlePointerMove = (e) => {
     if (!isDragging || !isZoomed) return;
-    e.preventDefault(); // prevent scrolling
+    e.preventDefault(); 
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
     setPan({ x: clientX - startPan.x, y: clientY - startPan.y });
@@ -105,11 +106,9 @@ const ShopGallery = () => {
 
   const handlePointerUp = () => setIsDragging(false);
 
-  // ✨ SEARCH & IMAGE-FIRST SORT ALGORITHM
   const processedInventory = useMemo(() => {
     let filtered = inventory.filter((product) => {
       const q = (searchQuery || "").toLowerCase();
-      // Search Title, Category, OR hidden Tags array
       const matchesSearch = !q || 
         (product.title || "").toLowerCase().includes(q) || 
         (product.category || "").toLowerCase().includes(q) ||
@@ -120,16 +119,13 @@ const ShopGallery = () => {
     });
 
     return filtered.sort((a, b) => {
-      // 1. Force items WITH images to the absolute top
       const aHasImg = (a.images && a.images.length > 0) || a.image ? 1 : 0;
       const bHasImg = (b.images && b.images.length > 0) || b.image ? 1 : 0;
       if (aHasImg !== bHasImg) return bHasImg - aHasImg;
-
-      // 2. Apply user-selected sort order
       if (sortOrder === 'priceAsc') return a.price - b.price;
       if (sortOrder === 'priceDesc') return b.price - a.price;
       if (sortOrder === 'nameAsc') return a.title.localeCompare(b.title);
-      return b.createdAt - a.createdAt; // newest default
+      return b.createdAt - a.createdAt;
     });
   }, [inventory, searchQuery, selectedCategory, sortOrder]);
 
@@ -142,10 +138,7 @@ const ShopGallery = () => {
       <div style={styles.stickyControlBar}>
         <div style={styles.tagScroller} className="hide-scrollbar">
           {uniqueCategories.map(cat => (
-            <button 
-              key={cat} onClick={() => setSelectedCategory(cat)}
-              style={{ ...styles.pill, ...(selectedCategory === cat ? styles.pillActive : styles.pillInactive) }}
-            >
+            <button key={cat} onClick={() => setSelectedCategory(cat)} style={{ ...styles.pill, ...(selectedCategory === cat ? styles.pillActive : styles.pillInactive) }}>
               {cat}
             </button>
           ))}
@@ -187,28 +180,9 @@ const ShopGallery = () => {
                 <div style={styles.modalImageSection}>
                    <div style={styles.scroller}>
                       {(selectedProduct.images && selectedProduct.images.length > 0 ? selectedProduct.images : (selectedProduct.image ? [selectedProduct.image] : [])).map((imgUrl, idx) => (
-                        // ✨ DRAG ZOOM WRAPPER
-                        <div 
-                          key={idx} 
-                          style={styles.modalImageWrapper}
-                          onMouseDown={handlePointerDown} onMouseMove={handlePointerMove} onMouseUp={handlePointerUp} onMouseLeave={handlePointerUp}
-                          onTouchStart={handlePointerDown} onTouchMove={handlePointerMove} onTouchEnd={handlePointerUp}
-                        >
+                        <div key={idx} style={styles.modalImageWrapper} onMouseDown={handlePointerDown} onMouseMove={handlePointerMove} onMouseUp={handlePointerUp} onMouseLeave={handlePointerUp} onTouchStart={handlePointerDown} onTouchMove={handlePointerMove} onTouchEnd={handlePointerUp}>
                           <div style={{ ...styles.auraBackground, backgroundImage: `url(${imgUrl})` }} />
-                          <img 
-                            src={imgUrl} 
-                            onClick={() => {
-                              if (isZoomed) { setIsZoomed(false); setPan({x:0, y:0}); }
-                              else { setIsZoomed(true); }
-                            }}
-                            style={{ 
-                              ...styles.modalImage, 
-                              transform: isZoomed ? `scale(2) translate(${pan.x/2}px, ${pan.y/2}px)` : 'scale(1)', 
-                              cursor: isZoomed ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in' 
-                            }} 
-                            alt={`View ${idx}`} 
-                            draggable="false" // prevents native browser ghost drag
-                          />
+                          <img src={imgUrl} onClick={() => { if (isZoomed) { setIsZoomed(false); setPan({x:0, y:0}); } else { setIsZoomed(true); } }} style={{ ...styles.modalImage, transform: isZoomed ? `scale(2) translate(${pan.x/2}px, ${pan.y/2}px)` : 'scale(1)', cursor: isZoomed ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in' }} alt={`View ${idx}`} draggable="false" />
                         </div>
                       ))}
                    </div>
@@ -223,9 +197,30 @@ const ShopGallery = () => {
                     {selectedProduct.title || selectedProduct.name || "Unnamed"}
                     {selectedProduct.stock <= 0 && <span style={styles.outOfStockText}> (Out of Stock)</span>}
                   </h2>
-                  <h3 style={styles.modalPrice}>
-                    ₹{getTierDetails(selectedProduct, activeVariant).price} <span style={styles.unit}>/ pc</span>
-                  </h3>
+
+                  {/* ✨ NEW: Dual Pricing UI for Modal */}
+                  {isInternalTeam ? (
+                    <div style={styles.modalInternalPricingBox}>
+                      <div style={{ flex: 1 }}>
+                         <span style={styles.modalInternalLabel}>Wholesale</span>
+                         <h3 style={styles.modalInternalValue}>
+                           ₹{activeVariant && activeVariant.ws ? activeVariant.ws : selectedProduct.ws} <span style={styles.unit}>/ pc</span>
+                         </h3>
+                      </div>
+                      <div style={{ width: '1px', backgroundColor: '#D1D5DB' }}></div>
+                      <div style={{ flex: 1, paddingLeft: '16px' }}>
+                         <span style={styles.modalInternalLabel}>Bulk</span>
+                         <h3 style={styles.modalInternalValue}>
+                           ₹{activeVariant && activeVariant.bulk ? activeVariant.bulk : selectedProduct.bulk} <span style={styles.unit}>/ pc</span>
+                         </h3>
+                      </div>
+                    </div>
+                  ) : (
+                    <h3 style={styles.modalPrice}>
+                      ₹{getTierDetails(selectedProduct, activeVariant).price} <span style={styles.unit}>/ pc</span>
+                    </h3>
+                  )}
+
                 </div>
                 
                 {selectedProduct.variants && selectedProduct.variants.length > 0 && (
@@ -233,10 +228,7 @@ const ShopGallery = () => {
                     <p style={styles.variantLabel}>Select {selectedProduct.variantLabel}:</p>
                     <div style={styles.variantGrid}>
                       {selectedProduct.variants.map((variant, idx) => (
-                        <button
-                          key={idx} onClick={() => setActiveVariant(variant)}
-                          style={{ ...styles.variantPill, ...(activeVariant?.name === variant.name ? styles.variantPillActive : styles.variantPillInactive) }}
-                        >
+                        <button key={idx} onClick={() => setActiveVariant(variant)} style={{ ...styles.variantPill, ...(activeVariant?.name === variant.name ? styles.variantPillActive : styles.variantPillInactive) }}>
                           {variant.name}
                         </button>
                       ))}
@@ -323,8 +315,14 @@ const styles = {
   modalDetails: { flex: '1 1 280px', display: 'flex', flexDirection: 'column', gap: '16px' },
   modalTitle: { margin: 0, color: '#111', fontSize: '1.25rem', fontWeight: '600' },
   outOfStockText: { color: 'red', fontSize: '1rem', fontWeight: '700' },
+  
   modalPrice: { margin: '4px 0 0 0', color: '#111', fontSize: '1.4rem', fontWeight: '700' },
   unit: { fontSize: '0.85rem', color: '#666', fontWeight: '400' },
+
+  // ✨ NEW: Internal Modal Styles
+  modalInternalPricingBox: { display: 'flex', gap: '16px', marginTop: '8px', backgroundColor: '#F9F8F6', padding: '12px', borderRadius: '6px', border: '1px solid #EAEAEA' },
+  modalInternalLabel: { fontSize: '0.75rem', color: '#666', textTransform: 'uppercase', fontWeight: '700' },
+  modalInternalValue: { margin: '4px 0 0 0', color: '#111', fontSize: '1.25rem', fontWeight: '700' },
   
   variantContainer: { backgroundColor: '#FFF', border: '1px solid #EAEAEA', padding: '12px', borderRadius: '6px' },
   variantLabel: { margin: '0 0 8px 0', fontSize: '0.75rem', fontWeight: '700', color: '#666', textTransform: 'uppercase' },

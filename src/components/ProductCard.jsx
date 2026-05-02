@@ -3,14 +3,16 @@ import { useAuth } from '../context/AuthContext';
 
 const ProductCard = ({ productData, onOpenModal }) => {
   const { addToCart, getTierDetails, cart, updateQuantity, removeFromCart } = useCart();
-  const { isPremiumTier } = useAuth();
+  // ✨ ADDED: Pull userTier to identify staff/management
+  const { isPremiumTier, userTier } = useAuth();
   
   const currentPricing = getTierDetails(productData);
   const imageArray = productData.images || (productData.image ? [productData.image] : []);
   const hasVariants = productData.variants && productData.variants.length > 0;
-  
-  // ✨ STOCK CHECK ENGINE
   const isOutOfStock = productData.stock <= 0;
+
+  // ✨ NEW: Internal Team Check
+  const isInternalTeam = ['admin', 'staff', 'management'].includes(userTier);
 
   return (
     <div style={{...styles.card, opacity: isOutOfStock ? 0.7 : 1}}>
@@ -29,23 +31,40 @@ const ProductCard = ({ productData, onOpenModal }) => {
           </div>
         )}
         
-        {/* ✨ Out of Stock Overlay Badge */}
         {isOutOfStock && (
            <div style={styles.outOfStockBadge}>OUT OF STOCK</div>
         )}
 
-        {!isOutOfStock && isPremiumTier && currentPricing.label && (
+        {!isOutOfStock && isPremiumTier && currentPricing.label && !isInternalTeam && (
           <div style={styles.badge}>{currentPricing.label}</div>
+        )}
+        
+        {/* Internal Team Badge indicator */}
+        {!isOutOfStock && isInternalTeam && (
+          <div style={{...styles.badge, backgroundColor: '#D4AF37', color: '#FFF'}}>INTERNAL</div>
         )}
       </div>
 
       <div style={styles.info}>
-        {/* Support both 'title' and 'name' for seamless backward compatibility */}
         <h3 style={styles.title} onClick={() => onOpenModal(productData)}>
           {productData.title || productData.name || "Unnamed Product"}
         </h3>
         
-        <p style={styles.price}>₹{currentPricing.price} <span style={styles.unit}>/ pc</span></p>
+        {/* ✨ NEW: Dual Pricing UI for Staff/Management */}
+        {isInternalTeam ? (
+          <div style={styles.internalPricingBox}>
+            <div style={styles.internalPriceRow}>
+              <span style={styles.internalLabel}>WS:</span>
+              <b style={styles.internalValue}>₹{productData.ws}</b>
+            </div>
+            <div style={styles.internalPriceRow}>
+              <span style={styles.internalLabel}>Bulk:</span>
+              <b style={styles.internalValue}>₹{productData.bulk}</b>
+            </div>
+          </div>
+        ) : (
+          <p style={styles.price}>₹{currentPricing.price} <span style={styles.unit}>/ pc</span></p>
+        )}
         
         <div style={styles.moqBox}>
           <div style={styles.moqItem}><span>MOQ</span><b>{currentPricing.moq || 1}</b></div>
@@ -54,75 +73,33 @@ const ProductCard = ({ productData, onOpenModal }) => {
         </div>
 
         {(() => {
-          // ✨ THE FIX: Lock out the button if stock is 0
-          if (isOutOfStock) {
-             return <button style={styles.disabledButton} disabled>Out of Stock</button>;
-          }
+          if (isOutOfStock) return <button style={styles.disabledButton} disabled>Out of Stock</button>;
 
-          // Force variant modal if options exist
           if (hasVariants) {
             return (
-              <button 
-                style={styles.variantButton} 
-                onClick={(e) => { 
-                  e.stopPropagation(); 
-                  onOpenModal(productData); 
-                }}
-              >
+              <button style={styles.variantButton} onClick={(e) => { e.stopPropagation(); onOpenModal(productData); }}>
                 Select Option
               </button>
             );
           }
 
-          // Standard Add to Cart logic
           const itemInCart = cart.find(item => item.cartItemId === productData.id || item.id === productData.id);
-          const moq = currentPricing.moq || 1;
-          const packSize = productData.packSize || 1;
-          const minQty = Math.max(moq, packSize); 
+          const minQty = Math.max(currentPricing.moq || 1, productData.packSize || 1); 
 
           if (itemInCart) {
             return (
               <div style={styles.amazonPill}>
-                <button 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const newQty = itemInCart.quantity - packSize;
-                    const idToUse = itemInCart.cartItemId || itemInCart.id;
-                    if (newQty < minQty) removeFromCart(idToUse);
-                    else updateQuantity(idToUse, newQty);
-                  }}
-                  style={styles.pillBtn}
-                >
-                  {itemInCart.quantity - packSize < minQty ? '🗑️' : '−'}
+                <button onClick={(e) => { e.stopPropagation(); const newQty = itemInCart.quantity - (productData.packSize || 1); const idToUse = itemInCart.cartItemId || itemInCart.id; if (newQty < minQty) removeFromCart(idToUse); else updateQuantity(idToUse, newQty); }} style={styles.pillBtn}>
+                  {itemInCart.quantity - (productData.packSize || 1) < minQty ? '🗑️' : '−'}
                 </button>
                 <span style={styles.pillQty}>{itemInCart.quantity}</span>
-                <button 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const idToUse = itemInCart.cartItemId || itemInCart.id;
-                    updateQuantity(idToUse, itemInCart.quantity + packSize);
-                  }}
-                  style={styles.pillBtn}
-                >
-                  +
-                </button>
+                <button onClick={(e) => { e.stopPropagation(); const idToUse = itemInCart.cartItemId || itemInCart.id; updateQuantity(idToUse, itemInCart.quantity + (productData.packSize || 1)); }} style={styles.pillBtn}>+</button>
               </div>
             );
           } else {
-            return (
-              <button 
-                style={styles.button} 
-                onClick={(e) => { 
-                  e.stopPropagation(); 
-                  addToCart(productData, minQty); 
-                }}
-              >
-                Add to Cart
-              </button>
-            );
+            return <button style={styles.button} onClick={(e) => { e.stopPropagation(); addToCart(productData, minQty); }}>Add to Cart</button>;
           }
         })()}
-
       </div>
     </div>
   );
@@ -136,20 +113,25 @@ const styles = {
   auraBackground: { position: 'absolute', top: '-10%', left: '-10%', right: '-10%', bottom: '-10%', backgroundSize: 'cover', backgroundPosition: 'center', filter: 'blur(10px)', opacity: 0.3, zIndex: 0 },
   image: { width: '80%', height: '80%', objectFit: 'contain', zIndex: 1, position: 'relative', borderRadius: '4px' },
   
-  // ✨ NEW: Badges
   badge: { position: 'absolute', top: '8px', right: '8px', backgroundColor: '#111', color: '#FFF', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem', fontWeight: '600', zIndex: 2, letterSpacing: '0.5px' },
   outOfStockBadge: { position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', backgroundColor: 'rgba(200,0,0,0.85)', color: '#FFF', padding: '6px 12px', borderRadius: '4px', fontSize: '0.8rem', fontWeight: '700', zIndex: 5, letterSpacing: '1px', whiteSpace: 'nowrap' },
   
   info: { padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 },
   title: { margin: 0, fontSize: '0.95rem', color: '#111', fontWeight: '500', cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  
   price: { margin: 0, fontSize: '1.1rem', fontWeight: '600', color: '#111' },
   unit: { fontSize: '0.75rem', color: '#666', fontWeight: '400' },
   
+  // ✨ NEW: Internal Box styles
+  internalPricingBox: { display: 'flex', flexDirection: 'column', gap: '4px', backgroundColor: '#F9F8F6', padding: '6px 8px', borderRadius: '4px', border: '1px solid #EAEAEA' },
+  internalPriceRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' },
+  internalLabel: { color: '#666', fontWeight: '600', fontSize: '0.75rem', textTransform: 'uppercase' },
+  internalValue: { color: '#111', fontWeight: '700' },
+
   moqBox: { display: 'flex', backgroundColor: '#FAFAFA', borderRadius: '4px', padding: '6px 8px', marginTop: 'auto', border: '1px solid #F3F4F6' },
   moqItem: { flex: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.7rem', color: '#666' },
   divider: { width: '1px', backgroundColor: '#EAEAEA', margin: '0 8px' },
   
-  // ✨ NEW: Button styles
   button: { width: '100%', backgroundColor: '#111', color: '#FFF', border: 'none', padding: '0', borderRadius: '4px', fontWeight: '500', fontSize: '0.9rem', cursor: 'pointer', marginTop: '4px', height: '36px', transition: 'background 0.2s' },
   disabledButton: { width: '100%', backgroundColor: '#EAEAEA', color: '#999', border: 'none', padding: '0', borderRadius: '4px', fontWeight: '600', fontSize: '0.9rem', cursor: 'not-allowed', marginTop: '4px', height: '36px' },
   variantButton: { width: '100%', backgroundColor: '#F9F8F6', color: '#111', border: '1px solid #D1D5DB', padding: '0', borderRadius: '4px', fontWeight: '600', fontSize: '0.9rem', cursor: 'pointer', marginTop: '4px', height: '36px', transition: 'all 0.2s' },

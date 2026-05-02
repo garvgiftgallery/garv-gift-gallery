@@ -807,7 +807,10 @@ const AdminDashboard = () => {
                         <option value="retail">Retail</option>
                         <option value="wholesale">Wholesale</option>
                         <option value="bulk">Bulk</option>
-                        <option value="admin">Admin</option>
+                        <option disabled>──────────</option>
+                        <option value="staff">Staff (Internal)</option>
+                        <option value="management">Management (Internal)</option>
+                        <option value="admin">Admin (Internal)</option>
                       </select>
                     </div>
                     <div>
