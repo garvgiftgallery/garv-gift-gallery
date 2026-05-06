@@ -56,10 +56,10 @@ const AdminDashboard = () => {
   const openDrawer = (type, item = null) => {
     setDrawerType(type);
     if (type === 'product') {
-      // ✨ ADDED: stock, category, tagsInput fields
+      // ✨ FIXED: Added cartonSize to default state
       setSelectedItem(item || { 
         name: '', retail: 0, ws: 0, bulk: 0, retailMoq: 1, wsMoq: 1, bulkMoq: 1, 
-        packSize: 1, stock: 100, category: '', tagsInput: '', desc: '', images: [], variantLabel: '', variants: [] 
+        packSize: 1, cartonSize: '', stock: 100, category: '', tagsInput: '', desc: '', images: [], variantLabel: '', variants: [] 
       });
     } else if (type === 'customer') {
       setSelectedItem(item || { name: '', email: '', phone: '', tier: 'retail', status: 'active' });
@@ -152,7 +152,6 @@ const AdminDashboard = () => {
     try {
       const validVariants = (selectedItem.variants || []).filter(v => v.name && v.name.trim() !== '');
       
-      // ✨ ADDED: Parse tags from comma separated string
       const tagsArray = selectedItem.tagsInput 
         ? selectedItem.tagsInput.split(',').map(t => DOMPurify.sanitize(t.trim())).filter(t => t) 
         : (selectedItem.tags || []);
@@ -160,9 +159,9 @@ const AdminDashboard = () => {
       const productData = {
         name: DOMPurify.sanitize(selectedItem.name || ''),
         desc: DOMPurify.sanitize(selectedItem.desc || ''),
-        category: DOMPurify.sanitize(selectedItem.category || selectedItem.cat || ''), // ✨ ADDED: Main category
-        tags: tagsArray, // ✨ ADDED: Hidden search array
-        stock: Number(selectedItem.stock) || 0, // ✨ ADDED: Stock
+        category: DOMPurify.sanitize(selectedItem.category || selectedItem.cat || ''), 
+        tags: tagsArray, 
+        stock: Number(selectedItem.stock) || 0, 
         retail: Number(selectedItem.retail) || 0,
         ws: Number(selectedItem.ws) || 0,
         bulk: Number(selectedItem.bulk) || 0,
@@ -170,6 +169,8 @@ const AdminDashboard = () => {
         wsMoq: Number(selectedItem.wsMoq) || 1,
         bulkMoq: Number(selectedItem.bulkMoq) || 1,
         packSize: Number(selectedItem.packSize) || 1,
+        // ✨ FIXED: Save cartonSize safely to the database
+        cartonSize: selectedItem.cartonSize ? Number(selectedItem.cartonSize) : null,
         images: selectedItem.images || [], 
         
         variantLabel: validVariants.length > 0 ? DOMPurify.sanitize(selectedItem.variantLabel || 'Option') : '',
@@ -273,8 +274,10 @@ const AdminDashboard = () => {
             const docRef = existingProduct ? doc(db, 'products', existingProduct.id) : doc(collection(db, 'products')); 
             
             const imageArray = row.imageUrl || row.image ? [DOMPurify.sanitize(row.imageUrl || row.image)] : [];
-            // ✨ ADDED: Parse tags and category
             const tagsArray = row.tags ? row.tags.split(',').map(t => DOMPurify.sanitize(t.trim())).filter(t => t) : [];
+
+            // ✨ FIXED: Added Carton Size checking to CSV importer
+            const rawCarton = row.Carton_Size || row.cartonSize || row.carton;
 
             batch.set(docRef, {
               name: safeTitle,
@@ -285,10 +288,11 @@ const AdminDashboard = () => {
               wsMoq: Number(row.wsMoq || row.moq) || 1,
               bulkMoq: Number(row.bulkMoq || row.moq) || 1,
               packSize: Number(row.packSize) || 1,
-              stock: Number(row.stock) || 0, // ✨ ADDED: Read stock from CSV
+              cartonSize: rawCarton ? Number(rawCarton) : null, // ✨ Save Carton Size
+              stock: Number(row.stock) || 0, 
               desc: DOMPurify.sanitize(row.desc || row.description || ""),
-              category: DOMPurify.sanitize(row.category || row.cat || ""), // ✨ ADDED
-              tags: tagsArray, // ✨ ADDED
+              category: DOMPurify.sanitize(row.category || row.cat || ""), 
+              tags: tagsArray, 
               images: imageArray, 
             }, { merge: true }); 
             count++;
@@ -320,7 +324,9 @@ const AdminDashboard = () => {
     const exportData = products.map(p => ({
       ID: p.id, Name: p.name, Category: p.category || p.cat, Tags: (p.tags || []).join(', '), Stock: p.stock || 0,
       Retail_Price: p.retail, WS_Price: p.ws, Bulk_Price: p.bulk,
-      Retail_MOQ: p.retailMoq, WS_MOQ: p.wsMoq, Bulk_MOQ: p.bulkMoq, Pack_Size: p.packSize,
+      Retail_MOQ: p.retailMoq, WS_MOQ: p.wsMoq, Bulk_MOQ: p.bulkMoq, 
+      Pack_Size: p.packSize,
+      Carton_Size: p.cartonSize || '', // ✨ FIXED: Adds Carton Size to export
       Description: p.desc, 
       Variant_Label: p.variantLabel || '',
       Variants: (p.variants || []).map(v => v.name).join(' | '),
@@ -336,7 +342,6 @@ const AdminDashboard = () => {
     handleExportCSV(exportData, 'GARV_Customers');
   };
 
-  // --- ✨ UPDATED Filtering (Includes tags) ---
   const filteredProducts = products
     .filter(p => {
       const q = searchQuery.toLowerCase();
@@ -413,7 +418,6 @@ const AdminDashboard = () => {
 
           <div className={viewMode === 'grid' ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" : "flex flex-col gap-2"}>
             {filteredProducts.map(product => (
-              // ✨ ADDED: Opacity change if out of stock
               <div key={product.id} onClick={() => openDrawer('product', product)} className={`bg-white rounded-xl border border-gray-100 shadow-sm hover:border-[#D4AF37] transition flex cursor-pointer ${viewMode === 'grid' ? 'flex-col p-4' : 'flex-row justify-between items-center p-3'} ${product.stock <= 0 ? 'opacity-60' : ''}`}>
                 <div className="flex items-center gap-4 flex-1">
                   {viewMode === 'list' && (
@@ -425,7 +429,6 @@ const AdminDashboard = () => {
                     <h4 className="font-bold text-gray-900 line-clamp-1 flex items-center gap-2">
                       {product.name || 'Unnamed'} 
                       {product.variants?.length > 0 && <span className="text-[9px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200">+{product.variants.length} Options</span>}
-                      {/* ✨ ADDED: Out of Stock Badge */}
                       {product.stock <= 0 && <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded border border-red-200 font-bold tracking-wider">OUT OF STOCK</span>}
                     </h4>
                     <div className="flex items-center gap-2 mt-1">
@@ -689,7 +692,6 @@ const AdminDashboard = () => {
                     </div>
                   </div>
 
-                  {/* ✨ ADDED: Category & Stock Grid */}
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Main Category (Pill)</label>
@@ -701,15 +703,20 @@ const AdminDashboard = () => {
                     </div>
                   </div>
 
-                  {/* ✨ ADDED: Tags & Pack Size Grid */}
+                  {/* ✨ FIXED: Tags, Pack Size & Carton Size Layout */}
+                  <div>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Tags (Comma Separated)</label>
+                    <input type="text" placeholder="e.g. brass, gift, diwali" value={selectedItem?.tagsInput || (selectedItem?.tags ? selectedItem.tags.join(', ') : '')} onChange={e => setSelectedItem({...selectedItem, tagsInput: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none text-sm" />
+                  </div>
+                  
                   <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Tags (Comma Separated)</label>
-                      <input type="text" placeholder="e.g. brass, gift, diwali" value={selectedItem?.tagsInput || (selectedItem?.tags ? selectedItem.tags.join(', ') : '')} onChange={e => setSelectedItem({...selectedItem, tagsInput: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none text-sm" />
-                    </div>
                     <div>
                       <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Pack Size</label>
                       <input type="number" min="1" value={selectedItem?.packSize} onChange={e => setSelectedItem({...selectedItem, packSize: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Master Carton Size</label>
+                      <input type="number" min="1" placeholder="Optional" value={selectedItem?.cartonSize || ''} onChange={e => setSelectedItem({...selectedItem, cartonSize: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" />
                     </div>
                   </div>
 

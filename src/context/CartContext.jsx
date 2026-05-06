@@ -8,8 +8,7 @@ export const CartProvider = ({ children }) => {
   const [cart, setCart] = useState([]);
   const { userTier } = useAuth(); 
 
-  // 🧠 SPRINT 4.5: Variant-Aware Tier Engine
-  // Now accepts an optional 'variant' parameter to check for price overrides
+  // 🧠 SPRINT 4.5: Variant-Aware Tier Engine with Universal Pack Size
   const getTierDetails = (product, variant = null) => {
     // Determine the base prices
     let finalRetail = product.retail || product.price || 0;
@@ -23,17 +22,24 @@ export const CartProvider = ({ children }) => {
       if (variant.bulk != null) finalBulk = variant.bulk;
     }
 
+    // ✨ NEW: Universal Pack Size controls the increment step for EVERYONE
+    const universalStep = product.packSize || 1;
+
     if (userTier === 'bulk') {
       return { 
         price: finalBulk, 
-        moq: product.bulkMoq || product.moq || 1, 
+        moq: product.bulkMoq || product.moq || universalStep, 
+        step: universalStep, // <-- Universal Step
         label: 'Bulk Rate' 
       };
     }
-    if (userTier === 'wholesale' || userTier === 'admin') {
+    
+    // ✨ NEW: Included staff and management in the wholesale pricing view bracket
+    if (['wholesale', 'admin', 'staff', 'management'].includes(userTier)) {
       return { 
         price: finalWs, 
-        moq: product.wsMoq || product.moq || 1, 
+        moq: product.wsMoq || product.moq || universalStep, 
+        step: universalStep, // <-- Universal Step
         label: 'Wholesale Rate' 
       };
     }
@@ -41,7 +47,8 @@ export const CartProvider = ({ children }) => {
     // Default Retail
     return { 
       price: finalRetail, 
-      moq: product.retailMoq || product.moq || 1, 
+      moq: product.retailMoq || product.moq || universalStep, 
+      step: universalStep, // <-- Universal Step
       label: null 
     }; 
   };
@@ -49,7 +56,7 @@ export const CartProvider = ({ children }) => {
   // 🧠 SPRINT 4.5: Composite Key Cart Logic
   const addToCart = (product, specificQty = null, selectedVariant = null) => {
     const tierDetails = getTierDetails(product, selectedVariant);
-    const packSize = product.packSize || 1;
+    const packSize = tierDetails.step; // Uses the guaranteed step size
     const minRequiredQty = Math.max(tierDetails.moq, packSize);
     
     // ✨ THE COMPOSITE KEY: "productId-variantName" (e.g. "123-Gold")
@@ -72,9 +79,9 @@ export const CartProvider = ({ children }) => {
       // Save all data into the cart object
       return [...prevCart, { 
         ...product, 
-        cartItemId: cartItemId, // Unique ID for this specific row
+        cartItemId: cartItemId, 
         variantName: selectedVariant ? selectedVariant.name : null,
-        variantObj: selectedVariant || null, // Keep the full object for future price recalcs
+        variantObj: selectedVariant || null, 
         quantity: initialQty 
       }];
     });
@@ -111,7 +118,7 @@ export const CartProvider = ({ children }) => {
       const itemTitle = item.variantName ? `${item.title || item.name} (${item.variantName})` : (item.title || item.name);
       
       text += `*${index + 1}. ${itemTitle}*\n`;
-      text += `Qty: ${item.quantity} (Pack Size: ${item.packSize || 1})\n`;
+      text += `Qty: ${item.quantity} (Pack Size: ${tier.step})\n`;
       text += `Price: ₹${tier.price} /pc\n`;
       text += `Subtotal: ₹${subtotal}\n\n`;
     });

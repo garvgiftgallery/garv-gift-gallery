@@ -23,11 +23,10 @@ const ShopGallery = () => {
   const [isFading, setIsFading] = useState(false);
   
   const { addToCart, getTierDetails, cart, updateQuantity, removeFromCart } = useCart(); 
-  // ✨ ADDED: Pull userTier
   const { searchQuery, userTier } = useAuth(); 
 
-  // ✨ NEW: Internal Team Check
   const isInternalTeam = ['admin', 'staff', 'management'].includes(userTier);
+  const showCartonInfo = ['admin', 'staff', 'management', 'bulk'].includes(userTier);
 
   useEffect(() => {
     setActiveVariant(null);
@@ -54,10 +53,17 @@ const ShopGallery = () => {
             image: data.imageUrl, 
             images: data.images,  
             stock: data.stock || 0,
-            ws: data.ws || data.wholesalePrice, // Mapping standard names     
-            bulk: data.bulk || data.bulkPrice,  // Mapping standard names
+            ws: data.ws || data.wholesalePrice, 
+            bulk: data.bulk || data.bulkPrice,  
+            
             moq: data.moq,
+            // ✨ FIXED THE BUG: Now actually pulling the correct Tier MOQs from the database!
+            retailMoq: data.retailMoq,
+            wsMoq: data.wsMoq,
+            bulkMoq: data.bulkMoq,
+
             packSize: data.packSize,
+            cartonSize: data.cartonSize || null, 
             desc: data.desc || "No description provided.",
             category: data.category || data.cat || '', 
             tags: data.tags || [], 
@@ -198,7 +204,6 @@ const ShopGallery = () => {
                     {selectedProduct.stock <= 0 && <span style={styles.outOfStockText}> (Out of Stock)</span>}
                   </h2>
 
-                  {/* ✨ NEW: Dual Pricing UI for Modal */}
                   {isInternalTeam ? (
                     <div style={styles.modalInternalPricingBox}>
                       <div style={{ flex: 1 }}>
@@ -247,9 +252,19 @@ const ShopGallery = () => {
                   <p style={styles.descText}>{selectedProduct.desc}</p>
                 </div>
                 
-                <div style={styles.moqRow}>
-                  <span>Min. Order: {getTierDetails(selectedProduct, activeVariant).moq || 1}</span>
-                  <span>Pack Size: {selectedProduct.packSize || 1}</span>
+                {/* ✨ FIXED: Matching Modal Carton layout to the new Product Card aesthetic */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderBottom: '1px solid #EAEAEA', paddingBottom: '12px' }}>
+                  <div style={styles.moqRow}>
+                    <span>Min. Order: {getTierDetails(selectedProduct, activeVariant).moq || 1}</span>
+                    <span>Pack Size: {getTierDetails(selectedProduct, activeVariant).step || 1}</span>
+                  </div>
+                  
+                  {showCartonInfo && selectedProduct.cartonSize && (
+                    <div style={styles.modalCartonBadge}>
+                      <span>📦 Master Carton Size</span>
+                      <b>{selectedProduct.cartonSize} pcs</b>
+                    </div>
+                  )}
                 </div>
 
                 {(() => {
@@ -260,16 +275,23 @@ const ShopGallery = () => {
 
                   const cartItemId = hasVariants ? `${selectedProduct.id}-${activeVariant.name}` : selectedProduct.id;
                   const itemInCart = cart.find(item => item.cartItemId === cartItemId);
-                  const minQty = Math.max(getTierDetails(selectedProduct, activeVariant).moq || 1, selectedProduct.packSize || 1); 
+                  
+                  const tierInfo = getTierDetails(selectedProduct, activeVariant);
+                  const currentStep = tierInfo.step;
+                  const minQty = Math.max(tierInfo.moq || 1, currentStep); 
 
                   if (itemInCart) {
                     return (
                       <div style={styles.amazonPill}>
-                        <button onClick={() => { const newQty = itemInCart.quantity - (selectedProduct.packSize || 1); if (newQty < minQty) removeFromCart(itemInCart.cartItemId); else updateQuantity(itemInCart.cartItemId, newQty); }} style={styles.pillBtn}>
-                          {itemInCart.quantity - (selectedProduct.packSize || 1) < minQty ? '🗑️' : '−'}
+                        <button onClick={() => { 
+                          const newQty = itemInCart.quantity - currentStep; 
+                          if (newQty < minQty) removeFromCart(itemInCart.cartItemId); 
+                          else updateQuantity(itemInCart.cartItemId, newQty); 
+                        }} style={styles.pillBtn}>
+                          {itemInCart.quantity - currentStep < minQty ? '🗑️' : '−'}
                         </button>
                         <span style={styles.pillQty}>{itemInCart.quantity}</span>
-                        <button onClick={() => updateQuantity(itemInCart.cartItemId, itemInCart.quantity + (selectedProduct.packSize || 1))} style={styles.pillBtn}>+</button>
+                        <button onClick={() => updateQuantity(itemInCart.cartItemId, itemInCart.quantity + currentStep)} style={styles.pillBtn}>+</button>
                       </div>
                     );
                   } else {
@@ -319,7 +341,6 @@ const styles = {
   modalPrice: { margin: '4px 0 0 0', color: '#111', fontSize: '1.4rem', fontWeight: '700' },
   unit: { fontSize: '0.85rem', color: '#666', fontWeight: '400' },
 
-  // ✨ NEW: Internal Modal Styles
   modalInternalPricingBox: { display: 'flex', gap: '16px', marginTop: '8px', backgroundColor: '#F9F8F6', padding: '12px', borderRadius: '6px', border: '1px solid #EAEAEA' },
   modalInternalLabel: { fontSize: '0.75rem', color: '#666', textTransform: 'uppercase', fontWeight: '700' },
   modalInternalValue: { margin: '4px 0 0 0', color: '#111', fontSize: '1.25rem', fontWeight: '700' },
@@ -335,7 +356,11 @@ const styles = {
   tag: { backgroundColor: '#FAFAFA', border: '1px solid #EAEAEA', padding: '4px 10px', borderRadius: '4px', fontSize: '0.75rem', color: '#444' },
   descBox: { backgroundColor: '#FAFAFA', padding: '12px', borderRadius: '6px', border: '1px solid #F3F4F6' },
   descText: { margin: 0, lineHeight: '1.5', color: '#444', fontSize: '0.85rem' },
-  moqRow: { display: 'flex', justifyContent: 'space-between', color: '#111', fontWeight: '500', fontSize: '0.85rem', borderBottom: '1px solid #EAEAEA', paddingBottom: '12px' },
+  moqRow: { display: 'flex', justifyContent: 'space-between', color: '#111', fontWeight: '500', fontSize: '0.85rem' },
+  
+  // ✨ NEW: Modal Carton Badge
+  modalCartonBadge: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#FFFAF0', padding: '8px 12px', borderRadius: '6px', border: '1px solid rgba(212, 175, 55, 0.4)', fontSize: '0.85rem', color: '#B8860B' },
+
   modalAddButton: { marginTop: 'auto', backgroundColor: '#111', color: '#FFF', padding: '0', border: 'none', borderRadius: '6px', fontWeight: '500', fontSize: '0.95rem', cursor: 'pointer', transition: 'background 0.2s', height: '42px' },
   amazonPill: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: '1px solid #D1D5DB', borderRadius: '4px', padding: '0 8px', backgroundColor: '#FFF', marginTop: 'auto', height: '42px', boxSizing: 'border-box' },
   pillBtn: { background: 'none', border: 'none', fontSize: '1.4rem', cursor: 'pointer', color: '#111', width: '36px', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' },

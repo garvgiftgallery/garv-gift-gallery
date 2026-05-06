@@ -11,79 +11,91 @@ const Cart = () => {
   const navigate = useNavigate();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleUnifiedCheckout = async () => {
+  // ✨ NEW: Carton Visibility Check for the Cart UI
+  const showCartonInfo = ['admin', 'staff', 'management', 'bulk'].includes(userTier);
+
+  // ✨ FIXED: Synchronous WhatsApp Trigger + Background Database Save
+  const handleUnifiedCheckout = () => {
     if (cart.length === 0 || !currentUser) return;
     setIsSubmitting(true);
 
-    try {
-      let customerName = "Valued Customer";
-      let customerEmail = currentUser.email || "";
+    // 1. GENERATE DATA SYNCHRONOUSLY
+    let customerName = currentUser.displayName || "Valued Customer";
+    let customerEmail = currentUser.email || "";
+    // Generate a temporary 6-character Reference ID so WhatsApp and Firebase match
+    const tempOrderId = Math.random().toString(36).substr(2, 6).toUpperCase();
 
-      // 🧠 FIXED: Database lookup now securely uses the UID from Sprint 1/2
-      if (currentUser.uid) {
-        const userDocRef = doc(db, 'customers', currentUser.uid);
-        const userDocSnap = await getDoc(userDocRef);
-        if (userDocSnap.exists()) {
-          customerName = userDocSnap.data().name || customerName;
-          customerEmail = userDocSnap.data().email || customerEmail;
-        }
-      }
+    // 2. FORMAT WHATSAPP MESSAGE
+    let text = `*NEW ORDER FROM GARV GIFT GALLERY* 🛍️\n`;
+    text += `*Name:* ${customerName}\n`;
+    text += `*Phone:* ${currentUser.phoneNumber || 'N/A'}\n`;
+    text += `*Tier:* ${(userTier || 'retail').toUpperCase()}\n\n`;
+    text += `*Order Ref:* ${tempOrderId}\n`;
+    text += `---------------------------\n`;
+    
+    cart.forEach((item, index) => {
+      const tierInfo = getTierDetails(item);
+      text += `*${index + 1}. ${item.title || item.name}*\n`;
+      // ✨ FIXED: Uses the universal step for the receipt
+      text += `Qty: ${item.quantity} (Pack Size: ${tierInfo.step})\n`; 
+      text += `Price: ₹${tierInfo.price} /pc\n`;
+      text += `Subtotal: ₹${item.quantity * tierInfo.price}\n\n`;
+    });
+    
+    text += `---------------------------\n`;
+    text += `*TOTAL AMOUNT: ₹${cartTotal}*\n`;
+    text += `---------------------------\n`;
+    text += `Please confirm availability and dispatch details.`;
 
-      // 1. Generate Order in Firestore Database
-      const orderRef = await addDoc(collection(db, 'orders'), {
-        userId: currentUser.uid,
-        customerName: customerName,
-        customerPhone: currentUser.phoneNumber || "No Phone",
-        customerEmail: customerEmail,
-        items: cart.map(item => ({ 
-          productId: item.id, 
-          title: item.title || item.name, 
-          quantity: item.quantity, 
-          pricePaid: getTierDetails(item).price // ✨ Dynamically locked at checkout
-        })),
-        totalAmount: cartTotal, 
-        tierPlacedAt: userTier || 'retail', 
-        status: 'pending_whatsapp',
-        createdAt: serverTimestamp()
-      });
+    const encodedText = encodeURIComponent(text);
+    const myWhatsAppNumber = "918851990042"; 
+    const whatsappUrl = `https://wa.me/${myWhatsAppNumber}?text=${encodedText}`;
 
-      // 2. Format Professional WhatsApp Receipt
-      let text = `*NEW ORDER FROM GARV GIFT GALLERY* 🛍️\n`;
-      text += `*Name:* ${customerName}\n`;
-      text += `*Phone:* ${currentUser.phoneNumber || 'N/A'}\n`;
-      text += `*Tier:* ${(userTier || 'retail').toUpperCase()}\n\n`;
-      text += `*Order ID:* ${orderRef.id.slice(0, 6).toUpperCase()}\n`;
-      text += `---------------------------\n`;
-      
-      cart.forEach((item, index) => {
-        const tierInfo = getTierDetails(item);
-        text += `*${index + 1}. ${item.title || item.name}*\n`;
-        text += `Qty: ${item.quantity} (Pack Size: ${item.packSize || 1})\n`;
-        text += `Price: ₹${tierInfo.price} /pc\n`;
-        text += `Subtotal: ₹${item.quantity * tierInfo.price}\n\n`;
-      });
-      
-      text += `---------------------------\n`;
-      text += `*TOTAL AMOUNT: ₹${cartTotal}*\n`;
-      text += `---------------------------\n`;
-      text += `Please confirm availability and dispatch details.`;
-
-      const encodedText = encodeURIComponent(text);
-      // ⚠️ YOUR ACTUAL WHATSAPP NUMBER
-      const myWhatsAppNumber = "918851990042"; 
-      const whatsappUrl = `https://wa.me/${myWhatsAppNumber}?text=${encodedText}`;
-
-      // 3. Clear cart and send to WhatsApp
-      clearCart();
-      window.open(whatsappUrl, '_blank'); 
-      navigate('/profile'); 
-
-    } catch (error) {
-      console.error("Checkout Error:", error);
-      alert('❌ Failed to process order. Please try again.');
-    } finally {
-      setIsSubmitting(false);
+    // 3. OPEN WHATSAPP INSTANTLY (Bypasses Popup Blockers)
+    const newWindow = window.open(whatsappUrl, '_blank');
+    // Mobile Safari Fallback: If it still blocks the new tab, force the current window to redirect
+    if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+        window.location.href = whatsappUrl;
     }
+
+    // 4. FIREBASE SAVE IN THE BACKGROUND (Async)
+    (async () => {
+      try {
+        // Fetch accurate name from database silently
+        if (currentUser.uid) {
+          const userDocRef = doc(db, 'customers', currentUser.uid);
+          const userDocSnap = await getDoc(userDocRef);
+          if (userDocSnap.exists()) {
+            customerName = userDocSnap.data().name || customerName;
+          }
+        }
+
+        await addDoc(collection(db, 'orders'), {
+          userId: currentUser.uid,
+          orderRef: tempOrderId, 
+          customerName: customerName,
+          customerPhone: currentUser.phoneNumber || "No Phone",
+          customerEmail: customerEmail,
+          items: cart.map(item => ({ 
+            productId: item.id, 
+            title: item.title || item.name, 
+            quantity: item.quantity, 
+            pricePaid: getTierDetails(item).price 
+          })),
+          totalAmount: cartTotal, 
+          tierPlacedAt: userTier || 'retail', 
+          status: 'pending_whatsapp',
+          createdAt: serverTimestamp()
+        });
+
+        clearCart();
+        navigate('/profile'); 
+      } catch (error) {
+        console.error("Background Checkout Error:", error);
+      } finally {
+        setIsSubmitting(false);
+      }
+    })();
   };
 
   if (cart.length === 0) {
@@ -104,12 +116,11 @@ const Cart = () => {
         {/* Left Side: Compact Items List */}
        <div style={styles.itemList}>
           {cart.map(item => {
-            // ✨ Smart Cart Engine reads the exact prices and MOQs
+            // ✨ FIXED: Uses the universal step instead of old packSize logic
             const tierInfo = getTierDetails(item);
             const currentPrice = tierInfo.price;
-            const moq = tierInfo.moq || 1;
-            const packSize = item.packSize || 1;
-            const minQty = Math.max(moq, packSize);
+            const currentStep = tierInfo.step; 
+            const minQty = Math.max(tierInfo.moq || 1, currentStep);
 
             return (
               <div key={item.id} style={styles.cartItem}>
@@ -118,30 +129,38 @@ const Cart = () => {
                 <div style={styles.itemDetails}>
                   <h3 style={styles.itemTitle}>{item.title || item.name}</h3>
                   <p style={styles.itemPrice}>₹{currentPrice} <span style={styles.unit}>/ pc</span></p>
+                  
+                  {/* ✨ NEW: Info label showing Pack Size and Master Carton (if authorized) */}
+                  <p style={{ fontSize: '0.75rem', color: '#666', margin: '4px 0 0 0', fontWeight: '500' }}>
+                    Pack: {currentStep} pcs
+                    {showCartonInfo && item.cartonSize && (
+                      <span style={{ color: '#D4AF37' }}> | Carton: {item.cartonSize} pcs</span>
+                    )}
+                  </p>
                 </div>
 
                 <div style={styles.actionGroup}>
                   <div style={styles.amazonPill}>
                     <button 
                       onClick={() => {
-                        const newQty = item.quantity - packSize;
-                        if (newQty < minQty) removeFromCart(item.id);
-                        else updateQuantity(item.id, newQty);
+                        const newQty = item.quantity - currentStep;
+                        if (newQty < minQty) removeFromCart(item.cartItemId || item.id);
+                        else updateQuantity(item.cartItemId || item.id, newQty);
                       }}
                       style={styles.pillBtn}
                     >
-                      {item.quantity - packSize < minQty ? '🗑️' : '−'}
+                      {item.quantity - currentStep < minQty ? '🗑️' : '−'}
                     </button>
                     <span style={styles.pillQty}>{item.quantity}</span>
                     <button 
-                      onClick={() => updateQuantity(item.id, item.quantity + packSize)}
+                      onClick={() => updateQuantity(item.cartItemId || item.id, item.quantity + currentStep)}
                       style={styles.pillBtn}
                     >
                       +
                     </button>
                   </div>
                   
-                  <button onClick={() => removeFromCart(item.id)} style={styles.trashBtn} title="Remove item">
+                  <button onClick={() => removeFromCart(item.cartItemId || item.id)} style={styles.trashBtn} title="Remove item">
                     <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
