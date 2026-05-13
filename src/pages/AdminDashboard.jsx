@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import Papa from 'papaparse'; 
 import DOMPurify from 'dompurify';
+import heic2any from 'heic2any'; // ✨ HEIC Support Library
 
 const AdminDashboard = () => {
   const { logout } = useAuth();
@@ -56,7 +57,6 @@ const AdminDashboard = () => {
   const openDrawer = (type, item = null) => {
     setDrawerType(type);
     if (type === 'product') {
-      // ✨ FIXED: Added cartonSize to default state
       setSelectedItem(item || { 
         name: '', retail: 0, ws: 0, bulk: 0, retailMoq: 1, wsMoq: 1, bulkMoq: 1, 
         packSize: 1, cartonSize: '', stock: 100, category: '', tagsInput: '', desc: '', images: [], variantLabel: '', variants: [] 
@@ -169,16 +169,18 @@ const AdminDashboard = () => {
         wsMoq: Number(selectedItem.wsMoq) || 1,
         bulkMoq: Number(selectedItem.bulkMoq) || 1,
         packSize: Number(selectedItem.packSize) || 1,
-        // ✨ FIXED: Save cartonSize safely to the database
         cartonSize: selectedItem.cartonSize ? Number(selectedItem.cartonSize) : null,
         images: selectedItem.images || [], 
         
         variantLabel: validVariants.length > 0 ? DOMPurify.sanitize(selectedItem.variantLabel || 'Option') : '',
+        
+        // ✨ FIXED: Added 'image' to the saved variant data in Firestore
         variants: validVariants.map(v => ({ 
           name: DOMPurify.sanitize(v.name.trim()),
           retail: v.retail ? Number(v.retail) : null,
           ws: v.ws ? Number(v.ws) : null,
-          bulk: v.bulk ? Number(v.bulk) : null
+          bulk: v.bulk ? Number(v.bulk) : null,
+          image: v.image || null
         })),
 
         updatedAt: serverTimestamp()
@@ -200,6 +202,75 @@ const AdminDashboard = () => {
     }
   };
 
+  // --- ✨ UPDATED: Image to WebP Converter (with HEIC Support) ---
+  const convertToWebP = async (originalFile) => {
+    let fileToProcess = originalFile;
+
+    // 1. Intercept HEIC files and convert to JPEG first
+    const isHeic = originalFile.type === "image/heic" || 
+                   originalFile.type === "image/heif" || 
+                   originalFile.name.toLowerCase().endsWith(".heic");
+
+    if (isHeic) {
+      try {
+        const convertedBlob = await heic2any({
+          blob: originalFile,
+          toType: "image/jpeg",
+          quality: 0.9, 
+        });
+        
+        // Handle burst photos (heic2any can return an array of images)
+        const finalBlob = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
+        fileToProcess = new File([finalBlob], originalFile.name.replace(/\.[^/.]+$/, ".jpg"), { type: "image/jpeg" });
+      } catch (error) {
+        console.error("HEIC Conversion Error:", error);
+        throw new Error("Failed to process HEIC file. Please try a different image.");
+      }
+    }
+
+    // 2. Proceed with normal Canvas Resizing and WebP Compression
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(fileToProcess);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target.result;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          
+          const MAX_WIDTH = 1200;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > MAX_WIDTH) {
+            height = Math.round((height * MAX_WIDTH) / width);
+            width = MAX_WIDTH;
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+
+          canvas.toBlob((blob) => {
+            if (blob) {
+              const webpFile = new File(
+                [blob], 
+                originalFile.name.replace(/\.[^/.]+$/, "") + ".webp", 
+                { type: "image/webp" }
+              );
+              resolve(webpFile);
+            } else {
+              reject(new Error("Canvas conversion failed"));
+            }
+          }, 'image/webp', 0.85); 
+        };
+        img.onerror = (err) => reject(new Error("Failed to load image onto canvas"));
+      };
+      reader.onerror = (error) => reject(error);
+    });
+  };
+
   // --- 📸 MULTIPLE IMAGE MANAGEMENT ---
   const handleImageUpload = async (event) => {
     const files = Array.from(event.target.files);
@@ -207,9 +278,10 @@ const AdminDashboard = () => {
     setIsProcessing(true);
     try {
       const newImageUrls = [];
-      for (const file of files) {
-        const storageRef = ref(storage, `product-images/${Date.now()}-${file.name}`);
-        const uploadTask = await uploadBytesResumable(storageRef, file);
+      for (const originalFile of files) {
+        const webpFile = await convertToWebP(originalFile);
+        const storageRef = ref(storage, `product-images/${Date.now()}-${webpFile.name}`);
+        const uploadTask = await uploadBytesResumable(storageRef, webpFile);
         const url = await getDownloadURL(uploadTask.ref);
         newImageUrls.push(url);
       }
@@ -219,7 +291,7 @@ const AdminDashboard = () => {
       }));
     } catch (error) {
       console.error("Upload error: ", error);
-      alert('Upload failed.');
+      alert(error.message || 'Upload failed.');
     } finally {
       setIsProcessing(false);
     }
@@ -232,11 +304,38 @@ const AdminDashboard = () => {
     }));
   };
 
+// --- ✨ FIXED: VARIANT SPECIFIC IMAGE UPLOAD ---
+  const handleVariantImageUpload = async (index, event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    setIsProcessing(true);
+    try {
+      const webpFile = await convertToWebP(file);
+      
+      // 🚨 FIX: Removed the "variants/" sub-folder so it complies with your strict Firebase Security Rules!
+      const storageRef = ref(storage, `product-images/${Date.now()}-var-${webpFile.name}`);
+      
+      const uploadTask = await uploadBytesResumable(storageRef, webpFile);
+      const url = await getDownloadURL(uploadTask.ref);
+
+      // Save the specific URL to the specific variant index
+      const newVariants = [...(selectedItem.variants || [])];
+      newVariants[index].image = url; 
+      setSelectedItem(prev => ({ ...prev, variants: newVariants }));
+    } catch (error) {
+      console.error("Variant image upload error: ", error);
+      alert('Variant image upload failed.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   // --- ✨ VARIANT MANAGEMENT ---
   const handleAddVariant = () => {
     setSelectedItem(prev => ({ 
       ...prev, 
-      variants: [...(prev.variants || []), { name: '', retail: '', ws: '', bulk: '' }] 
+      // ✨ ADDED: image: '' initialized for new variants
+      variants: [...(prev.variants || []), { name: '', retail: '', ws: '', bulk: '', image: '' }] 
     }));
   };
 
@@ -276,7 +375,6 @@ const AdminDashboard = () => {
             const imageArray = row.imageUrl || row.image ? [DOMPurify.sanitize(row.imageUrl || row.image)] : [];
             const tagsArray = row.tags ? row.tags.split(',').map(t => DOMPurify.sanitize(t.trim())).filter(t => t) : [];
 
-            // ✨ FIXED: Added Carton Size checking to CSV importer
             const rawCarton = row.Carton_Size || row.cartonSize || row.carton;
 
             batch.set(docRef, {
@@ -288,7 +386,7 @@ const AdminDashboard = () => {
               wsMoq: Number(row.wsMoq || row.moq) || 1,
               bulkMoq: Number(row.bulkMoq || row.moq) || 1,
               packSize: Number(row.packSize) || 1,
-              cartonSize: rawCarton ? Number(rawCarton) : null, // ✨ Save Carton Size
+              cartonSize: rawCarton ? Number(rawCarton) : null,
               stock: Number(row.stock) || 0, 
               desc: DOMPurify.sanitize(row.desc || row.description || ""),
               category: DOMPurify.sanitize(row.category || row.cat || ""), 
@@ -326,7 +424,7 @@ const AdminDashboard = () => {
       Retail_Price: p.retail, WS_Price: p.ws, Bulk_Price: p.bulk,
       Retail_MOQ: p.retailMoq, WS_MOQ: p.wsMoq, Bulk_MOQ: p.bulkMoq, 
       Pack_Size: p.packSize,
-      Carton_Size: p.cartonSize || '', // ✨ FIXED: Adds Carton Size to export
+      Carton_Size: p.cartonSize || '', 
       Description: p.desc, 
       Variant_Label: p.variantLabel || '',
       Variants: (p.variants || []).map(v => v.name).join(' | '),
@@ -703,7 +801,6 @@ const AdminDashboard = () => {
                     </div>
                   </div>
 
-                  {/* ✨ FIXED: Tags, Pack Size & Carton Size Layout */}
                   <div>
                     <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Tags (Comma Separated)</label>
                     <input type="text" placeholder="e.g. brass, gift, diwali" value={selectedItem?.tagsInput || (selectedItem?.tags ? selectedItem.tags.join(', ') : '')} onChange={e => setSelectedItem({...selectedItem, tagsInput: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none text-sm" />
@@ -720,7 +817,7 @@ const AdminDashboard = () => {
                     </div>
                   </div>
 
-                  {/* ✨ SPRINT 4.5: DYNAMIC VARIANTS WITH OPTIONAL PRICING */}
+                  {/* ✨ UPDATED: DYNAMIC VARIANTS WITH IMAGE UPLOAD BOX */}
                   <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mt-2">
                     <div className="flex justify-between items-center mb-3">
                       <label className="block text-xs font-bold text-gray-700 uppercase">Variants (Optional)</label>
@@ -740,12 +837,25 @@ const AdminDashboard = () => {
                           <p className="text-[10px] text-gray-400 italic mb-1 leading-tight">Leave prices blank to inherit base product prices.</p>
                           {selectedItem.variants.map((variant, idx) => (
                             <div key={idx} className="flex flex-col gap-2 p-3 bg-white border border-gray-200 rounded-md shadow-sm">
+                              
                               <div className="flex gap-2 items-center">
-                                <input type="text" placeholder={`Option ${idx + 1} Name (e.g. Rose Gold)`} value={variant.name} onChange={e => handleVariantChange(idx, 'name', e.target.value)} className="flex-1 p-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#D4AF37]" required />
+                                
+                                {/* ✨ NEW: Individual Variant Photo Upload Box */}
+                                <label className="relative w-10 h-10 bg-gray-100 border border-dashed border-gray-400 rounded overflow-hidden flex-shrink-0 cursor-pointer hover:border-[#D4AF37] flex items-center justify-center transition-colors">
+                                  {variant.image ? (
+                                    <img src={variant.image} alt="Var" className="w-full h-full object-cover" />
+                                  ) : (
+                                    <span className="text-gray-400 text-[9px] text-center leading-none font-bold uppercase tracking-wider">+<br/>Img</span>
+                                  )}
+                                  <input type="file" accept="image/*" className="hidden" onChange={(e) => handleVariantImageUpload(idx, e)} disabled={isProcessing} />
+                                </label>
+
+                                <input type="text" placeholder={`Option ${idx + 1} Name`} value={variant.name} onChange={e => handleVariantChange(idx, 'name', e.target.value)} className="flex-1 p-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#D4AF37]" required />
                                 <button type="button" onClick={() => handleRemoveVariant(idx)} className="text-red-400 hover:text-red-600 font-bold px-2 text-lg leading-none" title="Remove Option">
                                   &times;
                                 </button>
                               </div>
+
                               <div className="grid grid-cols-3 gap-2">
                                 <div>
                                   <label className="block text-[9px] font-bold text-gray-500 uppercase">Ret (Opt)</label>

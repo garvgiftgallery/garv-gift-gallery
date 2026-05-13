@@ -1,12 +1,26 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
 
 const Navbar = () => {
   const { totalItems } = useCart();
-  // ✨ INJECTED: Added userTier to check for Admin status
-  const { currentUser, userTier, searchQuery, setSearchQuery } = useAuth();
+  const { currentUser, userTier, searchQuery, setSearchQuery, presentationMode, setPresentationMode } = useAuth();
+  
+  const [showMenu, setShowMenu] = useState(false);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setShowMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const isStaffOrAdmin = ['admin', 'management', 'staff'].includes(userTier);
 
   return (
     <nav style={styles.nav}>
@@ -31,7 +45,54 @@ const Navbar = () => {
 
       <div style={styles.controls}>
         
-        {/* ✨ NEW: ADMIN STEALTH LINK */}
+        {/* ✨ UPDATED: Sleek, minimal Price Tag icon for Presentation Mode */}
+        {isStaffOrAdmin && (
+          <div style={{ position: 'relative' }} ref={menuRef}>
+            <button 
+              onClick={() => setShowMenu(!showMenu)} 
+              style={{ ...styles.iconButton, color: presentationMode !== 'all' ? '#D4AF37' : '#111' }} 
+              aria-label="Pricing Mode" 
+              title="Toggle Pricing Visibility"
+            >
+              <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+              </svg>
+            </button>
+
+            {/* Dropdown Menu */}
+            {showMenu && (
+              <div style={styles.dropdownMenu}>
+                <div style={styles.dropdownHeader}>Pricing View</div>
+                <button 
+                  style={{ ...styles.dropdownItem, ...(presentationMode === 'all' ? styles.activeItem : {}) }} 
+                  onClick={() => { setPresentationMode('all'); setShowMenu(false); }}
+                >
+                  Show All Prices
+                </button>
+                <button 
+                  style={{ ...styles.dropdownItem, ...(presentationMode === 'retail' ? styles.activeItem : {}) }} 
+                  onClick={() => { setPresentationMode('retail'); setShowMenu(false); }}
+                >
+                  Retail Only
+                </button>
+                <button 
+                  style={{ ...styles.dropdownItem, ...(presentationMode === 'wholesale' ? styles.activeItem : {}) }} 
+                  onClick={() => { setPresentationMode('wholesale'); setShowMenu(false); }}
+                >
+                  Wholesale Only
+                </button>
+                <button 
+                  style={{ ...styles.dropdownItem, ...(presentationMode === 'bulk' ? styles.activeItem : {}) }} 
+                  onClick={() => { setPresentationMode('bulk'); setShowMenu(false); }}
+                >
+                  Bulk Only
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ADMIN STEALTH LINK */}
         {userTier === 'admin' && (
           <Link to="/garv-secure-admin" style={styles.iconButton} aria-label="Control Center" title="Control Center">
             <svg width="24" height="24" fill="none" stroke="#D4AF37" strokeWidth="2" viewBox="0 0 24 24">
@@ -70,9 +131,13 @@ const styles = {
   searchInput: { width: '100%', padding: '10px 18px', borderRadius: '25px', border: '1px solid #EAEAEA', backgroundColor: '#FAFAFA', outline: 'none', fontSize: '0.9rem', color: '#111', transition: 'border-color 0.2s' },
   
   controls: { display: 'flex', gap: '16px', alignItems: 'center' },
-  
-  iconButton: { position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', color: '#111', transition: 'color 0.2s' },
-  badge: { position: 'absolute', top: '-4px', right: '-6px', backgroundColor: '#111', color: '#FFF', borderRadius: '50%', minWidth: '18px', height: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 'bold' }
+  iconButton: { position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', background: 'none', border: 'none', cursor: 'pointer', transition: 'color 0.2s' },
+  badge: { position: 'absolute', top: '-4px', right: '-6px', backgroundColor: '#111', color: '#FFF', borderRadius: '50%', minWidth: '18px', height: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 'bold' },
+
+  dropdownMenu: { position: 'absolute', top: '100%', right: 0, marginTop: '12px', backgroundColor: '#FFF', borderRadius: '8px', boxShadow: '0 10px 30px rgba(0,0,0,0.1)', border: '1px solid #EAEAEA', overflow: 'hidden', minWidth: '160px', zIndex: 1000 },
+  dropdownHeader: { padding: '10px 14px', fontSize: '0.7rem', fontWeight: '800', color: '#888', textTransform: 'uppercase', borderBottom: '1px solid #EAEAEA', backgroundColor: '#FAFAFA', letterSpacing: '0.5px' },
+  dropdownItem: { display: 'block', width: '100%', textAlign: 'left', padding: '12px 14px', fontSize: '0.85rem', fontWeight: '600', color: '#111', background: 'none', border: 'none', borderBottom: '1px solid #F5F5F5', cursor: 'pointer', transition: 'background 0.2s' },
+  activeItem: { color: '#D4AF37', backgroundColor: '#FFFAF0' }
 };
 
 export default Navbar;

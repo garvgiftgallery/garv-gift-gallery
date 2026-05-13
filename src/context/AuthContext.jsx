@@ -12,6 +12,10 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
+  // ✨ NEW: Global state for Staff/Admin Pricing Presentation Mode
+  // Options: 'all', 'retail', 'wholesale', 'bulk'
+  const [presentationMode, setPresentationMode] = useState('all');
+
   // ⚠️ REPLACE THIS WITH YOUR ACTUAL ADMIN EMAIL
   const ADMIN_EMAIL = "garvgiftgallery@gmail.com"; 
 
@@ -43,14 +47,19 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const login = (email, password) => signInWithEmailAndPassword(auth, email, password);
-  const logout = () => signOut(auth);
+  
+  const logout = async () => {
+    await signOut(auth);
+    setPresentationMode('all'); // Reset presentation mode on logout
+  };
   
   const isPremiumTier = userTier === 'wholesale' || userTier === 'bulk';
 
   return (
     <AuthContext.Provider value={{ 
       currentUser, userTier, isPremiumTier, 
-      login, logout, searchQuery, setSearchQuery 
+      login, logout, searchQuery, setSearchQuery,
+      presentationMode, setPresentationMode // ✨ NEW: Provided to the app
     }}>
       {!loading && children}
     </AuthContext.Provider>

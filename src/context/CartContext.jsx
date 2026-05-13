@@ -8,77 +8,63 @@ export const CartProvider = ({ children }) => {
   const [cart, setCart] = useState([]);
   const { userTier } = useAuth(); 
 
-  // 🧠 SPRINT 4.5: Variant-Aware Tier Engine with Universal Pack Size
   const getTierDetails = (product, variant = null) => {
-    // Determine the base prices
     let finalRetail = product.retail || product.price || 0;
     let finalWs = product.ws || product.wholesalePrice || finalRetail;
     let finalBulk = product.bulk || product.bulkPrice || finalRetail;
 
-    // If a variant is passed, check if it has custom prices. If so, override.
     if (variant) {
       if (variant.retail != null) finalRetail = variant.retail;
       if (variant.ws != null) finalWs = variant.ws;
       if (variant.bulk != null) finalBulk = variant.bulk;
     }
 
-    // ✨ NEW: Universal Pack Size controls the increment step for EVERYONE
     const universalStep = product.packSize || 1;
 
     if (userTier === 'bulk') {
-      return { 
-        price: finalBulk, 
-        moq: product.bulkMoq || product.moq || universalStep, 
-        step: universalStep, // <-- Universal Step
-        label: 'Bulk Rate' 
-      };
+      return { price: finalBulk, moq: product.bulkMoq || product.moq || universalStep, step: universalStep, label: 'Bulk Rate' };
     }
     
-    // ✨ NEW: Included staff and management in the wholesale pricing view bracket
     if (['wholesale', 'admin', 'staff', 'management'].includes(userTier)) {
-      return { 
-        price: finalWs, 
-        moq: product.wsMoq || product.moq || universalStep, 
-        step: universalStep, // <-- Universal Step
-        label: 'Wholesale Rate' 
-      };
+      return { price: finalWs, moq: product.wsMoq || product.moq || universalStep, step: universalStep, label: 'Wholesale Rate' };
     }
     
-    // Default Retail
-    return { 
-      price: finalRetail, 
-      moq: product.retailMoq || product.moq || universalStep, 
-      step: universalStep, // <-- Universal Step
-      label: null 
-    }; 
+    return { price: finalRetail, moq: product.retailMoq || product.moq || universalStep, step: universalStep, label: null }; 
   };
 
-  // 🧠 SPRINT 4.5: Composite Key Cart Logic
   const addToCart = (product, specificQty = null, selectedVariant = null) => {
     const tierDetails = getTierDetails(product, selectedVariant);
-    const packSize = tierDetails.step; // Uses the guaranteed step size
+    const packSize = tierDetails.step; 
     const minRequiredQty = Math.max(tierDetails.moq, packSize);
     
-    // ✨ THE COMPOSITE KEY: "productId-variantName" (e.g. "123-Gold")
-    // If no variant selected, just use the product ID.
     const cartItemId = selectedVariant ? `${product.id}-${selectedVariant.name}` : product.id;
     
+    const baseName = product.title || product.name || "Unnamed Product";
+    const displayName = selectedVariant ? `${baseName} (${selectedVariant.name})` : baseName;
+
+    // ✨ SMART IMAGE SELECTOR: Prioritizes Variant Image -> Base Image -> Any available Variant Image
+    const variantImg = selectedVariant?.image || null;
+    const defaultImg = (product.images && product.images.length > 0) ? product.images[0] : (product.image || null);
+    const fallbackVariantImg = (product.variants && product.variants.length > 0) ? product.variants.find(v => v.image)?.image : null;
+    
+    const finalImgToSave = variantImg || defaultImg || fallbackVariantImg;
+
     setCart(prevCart => {
       const existing = prevCart.find(item => item.cartItemId === cartItemId);
       
       if (existing) {
         const qtyToAdd = specificQty !== null ? specificQty : packSize;
-        return prevCart.map(item => item.cartItemId === cartItemId 
-          ? { ...item, quantity: item.quantity + qtyToAdd } 
-          : item
-        );
+        return prevCart.map(item => item.cartItemId === cartItemId ? { ...item, quantity: item.quantity + qtyToAdd } : item);
       }
       
       const initialQty = specificQty !== null ? specificQty : minRequiredQty;
       
-      // Save all data into the cart object
       return [...prevCart, { 
         ...product, 
+        title: displayName, 
+        name: displayName,  
+        image: finalImgToSave,           
+        images: finalImgToSave ? [finalImgToSave] : [], 
         cartItemId: cartItemId, 
         variantName: selectedVariant ? selectedVariant.name : null,
         variantObj: selectedVariant || null, 
@@ -99,8 +85,6 @@ export const CartProvider = ({ children }) => {
   const clearCart = () => setCart([]);
 
   const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
-  
-  // 🧠 Recalculates total based on current tier AND specific variant price
   const cartTotal = cart.reduce((sum, item) => sum + (getTierDetails(item, item.variantObj).price * item.quantity), 0);
 
   const generateWhatsAppOrder = (adminPhone = "918851990042") => {
@@ -114,10 +98,7 @@ export const CartProvider = ({ children }) => {
       const tier = getTierDetails(item, item.variantObj);
       const subtotal = tier.price * item.quantity;
       
-      // Include variant name in the title if it exists
-      const itemTitle = item.variantName ? `${item.title || item.name} (${item.variantName})` : (item.title || item.name);
-      
-      text += `*${index + 1}. ${itemTitle}*\n`;
+      text += `*${index + 1}. ${item.title || item.name}*\n`;
       text += `Qty: ${item.quantity} (Pack Size: ${tier.step})\n`;
       text += `Price: ₹${tier.price} /pc\n`;
       text += `Subtotal: ₹${subtotal}\n\n`;
@@ -133,9 +114,7 @@ export const CartProvider = ({ children }) => {
   };
 
   return (
-    <CartContext.Provider value={{ 
-      cart, addToCart, removeFromCart, updateQuantity, clearCart, totalItems, cartTotal, getTierDetails, generateWhatsAppOrder 
-    }}>
+    <CartContext.Provider value={{ cart, addToCart, removeFromCart, updateQuantity, clearCart, totalItems, cartTotal, getTierDetails, generateWhatsAppOrder }}>
       {children}
     </CartContext.Provider>
   );
