@@ -45,9 +45,9 @@ const Navbar = () => {
 
       <div style={styles.controls}>
         
-        {/* ✨ UPDATED: Sleek, minimal Price Tag icon for Presentation Mode */}
+        {/* ✨ FIXED: Removed 'position: relative' from this wrapper so the dropdown anchors to the main controls group instead! */}
         {isStaffOrAdmin && (
-          <div style={{ position: 'relative' }} ref={menuRef}>
+          <div ref={menuRef}>
             <button 
               onClick={() => setShowMenu(!showMenu)} 
               style={{ ...styles.iconButton, color: presentationMode !== 'all' ? '#D4AF37' : '#111' }} 
@@ -130,11 +130,14 @@ const styles = {
   searchContainer: { flex: '1 1 250px', maxWidth: '500px', display: 'flex' },
   searchInput: { width: '100%', padding: '10px 18px', borderRadius: '25px', border: '1px solid #EAEAEA', backgroundColor: '#FAFAFA', outline: 'none', fontSize: '0.9rem', color: '#111', transition: 'border-color 0.2s' },
   
-  controls: { display: 'flex', gap: '16px', alignItems: 'center' },
+  // ✨ FIXED: Added 'position: relative' to the parent controls flexbox.
+  controls: { display: 'flex', gap: '16px', alignItems: 'center', position: 'relative' },
+  
   iconButton: { position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px', background: 'none', border: 'none', cursor: 'pointer', transition: 'color 0.2s' },
   badge: { position: 'absolute', top: '-4px', right: '-6px', backgroundColor: '#111', color: '#FFF', borderRadius: '50%', minWidth: '18px', height: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 'bold' },
 
-  dropdownMenu: { position: 'absolute', top: '100%', right: 0, marginTop: '12px', backgroundColor: '#FFF', borderRadius: '8px', boxShadow: '0 10px 30px rgba(0,0,0,0.1)', border: '1px solid #EAEAEA', overflow: 'hidden', minWidth: '160px', zIndex: 1000 },
+  // ✨ FIXED: Now anchored to 'right: 0' of the entire control group, so it perfectly aligns with the Shopping Cart icon edge!
+  dropdownMenu: { position: 'absolute', top: '100%', right: '-4px', marginTop: '16px', backgroundColor: '#FFF', borderRadius: '12px', boxShadow: '0 10px 40px rgba(0,0,0,0.12)', border: '1px solid #EAEAEA', overflow: 'hidden', minWidth: '170px', zIndex: 1000 },
   dropdownHeader: { padding: '10px 14px', fontSize: '0.7rem', fontWeight: '800', color: '#888', textTransform: 'uppercase', borderBottom: '1px solid #EAEAEA', backgroundColor: '#FAFAFA', letterSpacing: '0.5px' },
   dropdownItem: { display: 'block', width: '100%', textAlign: 'left', padding: '12px 14px', fontSize: '0.85rem', fontWeight: '600', color: '#111', background: 'none', border: 'none', borderBottom: '1px solid #F5F5F5', cursor: 'pointer', transition: 'background 0.2s' },
   activeItem: { color: '#D4AF37', backgroundColor: '#FFFAF0' }
