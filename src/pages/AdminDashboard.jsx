@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { collection, getDocs, doc, updateDoc, addDoc, deleteDoc, query, orderBy, writeBatch, serverTimestamp } from 'firebase/firestore';
+import React, { useState, useEffect, useMemo } from 'react';
+import { collection, getDocs, doc, updateDoc, addDoc, deleteDoc, query, orderBy, writeBatch, serverTimestamp, getDoc, setDoc } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import Papa from 'papaparse'; 
 import DOMPurify from 'dompurify';
-import heic2any from 'heic2any'; // ✨ HEIC Support Library
+import heic2any from 'heic2any'; 
 
 const AdminDashboard = () => {
   const { logout } = useAuth();
@@ -23,15 +23,48 @@ const AdminDashboard = () => {
   const [viewMode, setViewMode] = useState('list'); 
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('newest');
-  
+
+  // --- ✨ CUSTOMER TAB STATES ---
+  const [customerViewMode, setCustomerViewMode] = useState('grid');
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
+  const [customerSortBy, setCustomerSortBy] = useState('newest');
+
+  // --- ✨ GLOBAL SETTINGS STATE ---
+  const [hideOutOfStock, setHideOutOfStock] = useState(false);
+
   // --- Drawer States ---
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [drawerType, setDrawerType] = useState(null); 
   const [selectedItem, setSelectedItem] = useState(null); 
 
-  useEffect(() => {
-    fetchData();
+  useEffect(() => { 
+    fetchData(); 
+    fetchSettings();
   }, []);
+
+  // Fetch Global Settings
+  const fetchSettings = async () => {
+    try {
+      const snap = await getDoc(doc(db, 'settings', 'general'));
+      if (snap.exists()) {
+        setHideOutOfStock(snap.data().hideOutOfStock || false);
+      }
+    } catch (error) {
+      console.error("Error fetching settings:", error);
+    }
+  };
+
+  const toggleHideOutOfStock = async () => {
+    const newValue = !hideOutOfStock;
+    setHideOutOfStock(newValue); // Optimistic UI update
+    try {
+      await setDoc(doc(db, 'settings', 'general'), { hideOutOfStock: newValue }, { merge: true });
+    } catch (error) {
+      console.error("Error updating settings:", error);
+      alert("Failed to save settings to database.");
+      setHideOutOfStock(!newValue); // Revert on failure
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -53,7 +86,6 @@ const AdminDashboard = () => {
     navigate('/admin-portal-access');
   };
 
-  // --- 🚪 Drawer Handlers ---
   const openDrawer = (type, item = null) => {
     setDrawerType(type);
     if (type === 'product') {
@@ -75,16 +107,10 @@ const AdminDashboard = () => {
     }, 300);
   };
 
-  // --- 🗑️ Delete Data ---
   const handleDelete = async (collectionName, id) => {
-    let itemName = 'item';
-    if (collectionName === 'products') itemName = 'product';
-    if (collectionName === 'customers') itemName = 'customer';
-    if (collectionName === 'orders') itemName = 'order';
-
-    const isConfirmed = window.confirm(`Are you absolutely sure you want to delete this ${itemName}? This cannot be undone.`);
-    if (!isConfirmed) return;
-
+    let itemName = collectionName === 'products' ? 'product' : collectionName === 'customers' ? 'customer' : 'order';
+    if (!window.confirm(`Are you absolutely sure you want to delete this ${itemName}? This cannot be undone.`)) return;
+    
     setIsProcessing(true);
     try {
       await deleteDoc(doc(db, collectionName, id));
@@ -98,7 +124,6 @@ const AdminDashboard = () => {
     }
   };
 
-  // --- 📝 Update Order Status ---
   const handleUpdateOrderStatus = async (orderId, newStatus) => {
     setIsProcessing(true);
     try {
@@ -112,14 +137,12 @@ const AdminDashboard = () => {
     }
   };
 
-  // --- 👤 Save Customer ---
   const handleSaveCustomer = async (e) => {
     e.preventDefault();
     setIsProcessing(true);
     try {
       if (selectedItem.id) {
-        const custRef = doc(db, 'customers', selectedItem.id);
-        await updateDoc(custRef, {
+        await updateDoc(doc(db, 'customers', selectedItem.id), {
           name: selectedItem.name,
           phone: selectedItem.phone,
           tier: selectedItem.tier,
@@ -145,23 +168,41 @@ const AdminDashboard = () => {
     }
   };
 
-  // --- 📦 Save Product ---
+  const handleApproveAndEmail = async (customer) => {
+    setIsProcessing(true);
+    try {
+      await updateDoc(doc(db, 'customers', customer.id), { 
+        status: 'active', 
+        tier: 'wholesale' 
+      });
+      
+      const subject = encodeURIComponent("Your Garv Gift Gallery Account is Approved!");
+      const body = encodeURIComponent(`Hi ${customer.name || 'Valued Customer'},\n\nGreat news! Your account at Garv Gift Gallery has been approved.\n\nYou have been upgraded to our Wholesale tier. You can now log in to view our premium catalogue and access your exclusive pricing.\n\nThank you,\nGarv Gift Gallery`);
+      
+      window.location.href = `mailto:${customer.email}?subject=${subject}&body=${body}`;
+      
+      await fetchData();
+    } catch (err) {
+      console.error(err);
+      alert("Error approving customer.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   const handleSaveProduct = async (e) => {
     e.preventDefault();
     setIsProcessing(true);
     try {
       const validVariants = (selectedItem.variants || []).filter(v => v.name && v.name.trim() !== '');
+      const tagsArray = selectedItem.tagsInput ? selectedItem.tagsInput.split(',').map(t => DOMPurify.sanitize(t.trim())).filter(t => t) : (selectedItem.tags || []);
       
-      const tagsArray = selectedItem.tagsInput 
-        ? selectedItem.tagsInput.split(',').map(t => DOMPurify.sanitize(t.trim())).filter(t => t) 
-        : (selectedItem.tags || []);
-
       const productData = {
         name: DOMPurify.sanitize(selectedItem.name || ''),
         desc: DOMPurify.sanitize(selectedItem.desc || ''),
-        category: DOMPurify.sanitize(selectedItem.category || selectedItem.cat || ''), 
-        tags: tagsArray, 
-        stock: Number(selectedItem.stock) || 0, 
+        category: DOMPurify.sanitize(selectedItem.category || selectedItem.cat || ''),
+        tags: tagsArray,
+        stock: Number(selectedItem.stock) || 0,
         retail: Number(selectedItem.retail) || 0,
         ws: Number(selectedItem.ws) || 0,
         bulk: Number(selectedItem.bulk) || 0,
@@ -170,19 +211,15 @@ const AdminDashboard = () => {
         bulkMoq: Number(selectedItem.bulkMoq) || 1,
         packSize: Number(selectedItem.packSize) || 1,
         cartonSize: selectedItem.cartonSize ? Number(selectedItem.cartonSize) : null,
-        images: selectedItem.images || [], 
-        
+        images: selectedItem.images || [],
         variantLabel: validVariants.length > 0 ? DOMPurify.sanitize(selectedItem.variantLabel || 'Option') : '',
-        
-        // ✨ FIXED: Added 'image' to the saved variant data in Firestore
-        variants: validVariants.map(v => ({ 
+        variants: validVariants.map(v => ({
           name: DOMPurify.sanitize(v.name.trim()),
           retail: v.retail ? Number(v.retail) : null,
           ws: v.ws ? Number(v.ws) : null,
           bulk: v.bulk ? Number(v.bulk) : null,
           image: v.image || null
         })),
-
         updatedAt: serverTimestamp()
       };
 
@@ -202,33 +239,18 @@ const AdminDashboard = () => {
     }
   };
 
-  // --- ✨ UPDATED: Image to WebP Converter (with HEIC Support) ---
   const convertToWebP = async (originalFile) => {
     let fileToProcess = originalFile;
-
-    // 1. Intercept HEIC files and convert to JPEG first
-    const isHeic = originalFile.type === "image/heic" || 
-                   originalFile.type === "image/heif" || 
-                   originalFile.name.toLowerCase().endsWith(".heic");
-
+    const isHeic = originalFile.type === "image/heic" || originalFile.type === "image/heif" || originalFile.name.toLowerCase().endsWith(".heic");
     if (isHeic) {
       try {
-        const convertedBlob = await heic2any({
-          blob: originalFile,
-          toType: "image/jpeg",
-          quality: 0.9, 
-        });
-        
-        // Handle burst photos (heic2any can return an array of images)
+        const convertedBlob = await heic2any({ blob: originalFile, toType: "image/jpeg", quality: 0.9 });
         const finalBlob = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
         fileToProcess = new File([finalBlob], originalFile.name.replace(/\.[^/.]+$/, ".jpg"), { type: "image/jpeg" });
       } catch (error) {
-        console.error("HEIC Conversion Error:", error);
         throw new Error("Failed to process HEIC file. Please try a different image.");
       }
     }
-
-    // 2. Proceed with normal Canvas Resizing and WebP Compression
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.readAsDataURL(fileToProcess);
@@ -237,7 +259,6 @@ const AdminDashboard = () => {
         img.src = event.target.result;
         img.onload = () => {
           const canvas = document.createElement('canvas');
-          
           const MAX_WIDTH = 1200;
           let width = img.width;
           let height = img.height;
@@ -254,24 +275,18 @@ const AdminDashboard = () => {
 
           canvas.toBlob((blob) => {
             if (blob) {
-              const webpFile = new File(
-                [blob], 
-                originalFile.name.replace(/\.[^/.]+$/, "") + ".webp", 
-                { type: "image/webp" }
-              );
-              resolve(webpFile);
+              resolve(new File([blob], originalFile.name.replace(/\.[^/.]+$/, "") + ".webp", { type: "image/webp" }));
             } else {
               reject(new Error("Canvas conversion failed"));
             }
           }, 'image/webp', 0.85); 
         };
-        img.onerror = (err) => reject(new Error("Failed to load image onto canvas"));
+        img.onerror = () => reject(new Error("Failed to load image onto canvas"));
       };
       reader.onerror = (error) => reject(error);
     });
   };
 
-  // --- 📸 MULTIPLE IMAGE MANAGEMENT ---
   const handleImageUpload = async (event) => {
     const files = Array.from(event.target.files);
     if (!files.length) return;
@@ -282,16 +297,34 @@ const AdminDashboard = () => {
         const webpFile = await convertToWebP(originalFile);
         const storageRef = ref(storage, `product-images/${Date.now()}-${webpFile.name}`);
         const uploadTask = await uploadBytesResumable(storageRef, webpFile);
-        const url = await getDownloadURL(uploadTask.ref);
-        newImageUrls.push(url);
+        newImageUrls.push(await getDownloadURL(uploadTask.ref));
       }
       setSelectedItem(prev => ({ 
         ...prev, 
         images: [...(prev.images || []), ...newImageUrls] 
       }));
     } catch (error) {
-      console.error("Upload error: ", error);
       alert(error.message || 'Upload failed.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleVariantImageUpload = async (index, event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    setIsProcessing(true);
+    try {
+      const webpFile = await convertToWebP(file);
+      const storageRef = ref(storage, `product-images/${Date.now()}-var-${webpFile.name}`);
+      const uploadTask = await uploadBytesResumable(storageRef, webpFile);
+      const url = await getDownloadURL(uploadTask.ref);
+
+      const newVariants = [...(selectedItem.variants || [])];
+      newVariants[index].image = url; 
+      setSelectedItem(prev => ({ ...prev, variants: newVariants }));
+    } catch (error) {
+      alert('Variant image upload failed.');
     } finally {
       setIsProcessing(false);
     }
@@ -304,37 +337,9 @@ const AdminDashboard = () => {
     }));
   };
 
-// --- ✨ FIXED: VARIANT SPECIFIC IMAGE UPLOAD ---
-  const handleVariantImageUpload = async (index, event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-    setIsProcessing(true);
-    try {
-      const webpFile = await convertToWebP(file);
-      
-      // 🚨 FIX: Removed the "variants/" sub-folder so it complies with your strict Firebase Security Rules!
-      const storageRef = ref(storage, `product-images/${Date.now()}-var-${webpFile.name}`);
-      
-      const uploadTask = await uploadBytesResumable(storageRef, webpFile);
-      const url = await getDownloadURL(uploadTask.ref);
-
-      // Save the specific URL to the specific variant index
-      const newVariants = [...(selectedItem.variants || [])];
-      newVariants[index].image = url; 
-      setSelectedItem(prev => ({ ...prev, variants: newVariants }));
-    } catch (error) {
-      console.error("Variant image upload error: ", error);
-      alert('Variant image upload failed.');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  // --- ✨ VARIANT MANAGEMENT ---
   const handleAddVariant = () => {
     setSelectedItem(prev => ({ 
       ...prev, 
-      // ✨ ADDED: image: '' initialized for new variants
       variants: [...(prev.variants || []), { name: '', retail: '', ws: '', bulk: '', image: '' }] 
     }));
   };
@@ -352,12 +357,10 @@ const AdminDashboard = () => {
     }));
   };
 
-  // --- ⬇️ Bulk Import CSV ---
   const handleBulkImport = (event) => {
     const file = event.target.files[0];
     if (!file) return;
     setIsProcessing(true);
-
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
@@ -374,7 +377,6 @@ const AdminDashboard = () => {
             
             const imageArray = row.imageUrl || row.image ? [DOMPurify.sanitize(row.imageUrl || row.image)] : [];
             const tagsArray = row.tags ? row.tags.split(',').map(t => DOMPurify.sanitize(t.trim())).filter(t => t) : [];
-
             const rawCarton = row.Carton_Size || row.cartonSize || row.carton;
 
             batch.set(docRef, {
@@ -440,35 +442,66 @@ const AdminDashboard = () => {
     handleExportCSV(exportData, 'GARV_Customers');
   };
 
-  const filteredProducts = products
-    .filter(p => {
+  const filteredProducts = useMemo(() => {
+    return products.filter(p => {
       const q = searchQuery.toLowerCase();
       return (p.name || '').toLowerCase().includes(q) || 
              (p.category || p.cat || '').toLowerCase().includes(q) ||
              (p.tags || []).some(t => t.toLowerCase().includes(q));
-    })
-    .sort((a, b) => {
+    }).sort((a, b) => {
       if (sortBy === 'priceAsc') return a.retail - b.retail;
       if (sortBy === 'priceDesc') return b.retail - a.retail;
       if (sortBy === 'nameAsc') return (a.name || '').localeCompare(b.name || '');
       return 0; 
     });
+  }, [products, searchQuery, sortBy]);
+
+  // --- ✨ CUSTOMER FILTERING & SORTING LOGIC ---
+  const filteredActiveCustomers = useMemo(() => {
+    return customers
+      .filter(c => c.status !== 'pending')
+      .filter(c => {
+         const q = customerSearchQuery.toLowerCase();
+         return (c.name || '').toLowerCase().includes(q) || 
+                (c.email || '').toLowerCase().includes(q) ||
+                (c.phone || '').includes(q);
+      })
+      .sort((a, b) => {
+         if (customerSortBy === 'nameAsc') return (a.name || '').localeCompare(b.name || '');
+         if (customerSortBy === 'tier') return (a.tier || '').localeCompare(b.tier || '');
+         // newest fallback
+         return (b.createdAt?.toMillis ? b.createdAt.toMillis() : 0) - (a.createdAt?.toMillis ? a.createdAt.toMillis() : 0);
+      });
+  }, [customers, customerSearchQuery, customerSortBy]);
+
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 relative bg-[#F9F8F6] min-h-screen">
       
-      {/* HEADER */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-gray-200 pb-6 mb-6">
+      {/* ✨ UPDATED HEADER WITH MASTER SWITCH */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-gray-200 pb-6 mb-6 gap-4">
         <div>
           <h2 className="text-3xl font-bold text-gray-900 tracking-tight uppercase">Control Center</h2>
           <p className="text-gray-500 text-sm mt-1">Manage inventory, orders, and CRM securely.</p>
         </div>
-        <button onClick={handleLogout} className="mt-4 md:mt-0 bg-white border border-gray-300 text-gray-700 px-5 py-2 rounded-md text-sm font-semibold hover:bg-gray-50 transition">
-          Sign Out
-        </button>
+        
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-lg border border-gray-200 shadow-sm" title="When ON, standard users will not see items with 0 stock.">
+            <span className="text-xs font-bold text-gray-700 uppercase tracking-wider">Hide Out-of-Stock for Users</span>
+            <button 
+              onClick={toggleHideOutOfStock} 
+              className={`w-11 h-6 rounded-full p-1 flex items-center transition-colors duration-300 ease-in-out ${hideOutOfStock ? 'bg-[#D4AF37]' : 'bg-gray-300'}`}
+            >
+              <div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-300 ease-in-out ${hideOutOfStock ? 'translate-x-5' : 'translate-x-0'}`}></div>
+            </button>
+          </div>
+          
+          <button onClick={handleLogout} className="bg-white border border-gray-300 text-gray-700 px-5 py-2 rounded-md text-sm font-semibold hover:bg-gray-50 transition">
+            Sign Out
+          </button>
+        </div>
       </div>
 
-      {/* TABS */}
       <div className="flex space-x-2 overflow-x-auto pb-4 mb-6 hide-scrollbar">
         {['inventory', 'orders', 'customers'].map((tab) => (
           <button
@@ -667,29 +700,71 @@ const AdminDashboard = () => {
                       <p className="text-sm text-gray-500">{cust.email}</p>
                       <p className="text-xs text-gray-400 mt-1">{cust.phone || 'No Phone'}</p>
                     </div>
+                    
+                    {/* RESTORED: Approve and Email buttons */}
                     <div className="flex gap-2">
                       <button 
                         onClick={() => {
                           setSelectedItem({...cust, status: 'active', tier: 'wholesale'});
                           openDrawer('customer', {...cust, status: 'active', tier: 'wholesale'});
                         }} 
-                        className="flex-1 bg-[#111111] text-white text-xs font-bold py-2 rounded hover:bg-black transition uppercase"
+                        className="flex-1 bg-white border border-gray-300 text-gray-700 text-xs font-bold py-2 rounded hover:bg-gray-50 transition uppercase shadow-sm"
                       >
-                        Review & Approve
+                        Review
+                      </button>
+                      <button 
+                        onClick={() => handleApproveAndEmail(cust)} 
+                        disabled={isProcessing} 
+                        className="flex-1 bg-[#111111] text-white text-xs font-bold py-2 rounded hover:bg-black transition uppercase disabled:opacity-50 shadow-sm"
+                      >
+                        Approve & Email
                       </button>
                     </div>
+
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {/* ACTIVE ROSTER */}
+          {/* ✨ UPGRADED ACTIVE ROSTER WITH SORT, SEARCH & GRID/LIST */}
           <div>
-            <h3 className="text-gray-900 font-bold uppercase tracking-wider mb-4">Active Roster</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {customers.filter(c => c.status !== 'pending').map((cust) => (
-                <div key={cust.id} onClick={() => openDrawer('customer', cust)} className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm cursor-pointer hover:border-[#D4AF37] transition flex justify-between items-center relative overflow-hidden">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4">
+              <h3 className="text-gray-900 font-bold uppercase tracking-wider m-0">Active Roster</h3>
+              
+              <div className="flex w-full md:w-auto gap-2">
+                <input 
+                  type="text" 
+                  placeholder="Search customers..." 
+                  value={customerSearchQuery} 
+                  onChange={(e) => setCustomerSearchQuery(e.target.value)} 
+                  className="w-full md:w-48 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#D4AF37] focus:outline-none text-sm" 
+                />
+                <select 
+                  value={customerSortBy} 
+                  onChange={(e) => setCustomerSortBy(e.target.value)} 
+                  className="px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-[#D4AF37] focus:outline-none text-sm bg-white cursor-pointer"
+                >
+                  <option value="newest">Newest</option>
+                  <option value="nameAsc">A - Z</option>
+                  <option value="tier">Tier</option>
+                </select>
+                <button 
+                  onClick={() => setCustomerViewMode(customerViewMode === 'grid' ? 'list' : 'grid')} 
+                  className="px-3 py-2 bg-gray-100 text-gray-700 rounded-md text-sm font-semibold hover:bg-gray-200 hidden md:block transition-colors"
+                >
+                  {customerViewMode === 'grid' ? '☰ List' : '⊞ Grid'}
+                </button>
+              </div>
+            </div>
+
+            <div className={customerViewMode === 'grid' ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" : "flex flex-col gap-2"}>
+              {filteredActiveCustomers.map((cust) => (
+                <div 
+                  key={cust.id} 
+                  onClick={() => openDrawer('customer', cust)} 
+                  className={`bg-white rounded-xl border border-gray-100 shadow-sm cursor-pointer hover:border-[#D4AF37] transition relative overflow-hidden ${customerViewMode === 'grid' ? 'p-5 flex flex-col justify-between h-full' : 'p-3 flex flex-row items-center justify-between'}`}
+                >
                   {cust.status === 'pre_approved' && (
                     <div className="absolute top-0 right-0 bg-yellow-100 text-yellow-800 text-[9px] font-bold px-2 py-1 uppercase rounded-bl-lg">
                       Pre-Approved
@@ -698,17 +773,25 @@ const AdminDashboard = () => {
                   <div>
                     <h4 className="font-bold text-gray-900">{cust.name || 'Valued Customer'}</h4>
                     <p className="text-sm text-gray-500">{cust.email}</p>
-                    <p className="text-xs text-gray-400 mt-1">{cust.phone || 'No Phone'}</p>
+                    {customerViewMode === 'grid' && (
+                      <p className="text-xs text-gray-400 mt-1">{cust.phone || 'No Phone'}</p>
+                    )}
                   </div>
-                  <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border ${
-                    cust.tier === 'admin' ? 'bg-red-50 text-red-700 border-red-200' : 
-                    cust.tier === 'wholesale' ? 'bg-blue-50 text-blue-700 border-blue-200' : 
-                    cust.tier === 'bulk' ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-gray-50 text-gray-700 border-gray-200'
-                  }`}>
-                    {cust.tier || 'Retail'}
-                  </span>
+                  <div className={customerViewMode === 'grid' ? 'mt-4' : ''}>
+                    <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border ${
+                      cust.tier === 'admin' ? 'bg-red-50 text-red-700 border-red-200' : 
+                      cust.tier === 'wholesale' ? 'bg-blue-50 text-blue-700 border-blue-200' : 
+                      cust.tier === 'bulk' ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-gray-50 text-gray-700 border-gray-200'
+                    }`}>
+                      {cust.tier || 'Retail'}
+                    </span>
+                  </div>
                 </div>
               ))}
+              
+              {filteredActiveCustomers.length === 0 && (
+                 <p className="text-gray-500 text-sm mt-4">No matching customers found.</p>
+              )}
             </div>
           </div>
           
@@ -742,8 +825,14 @@ const AdminDashboard = () => {
                       {selectedItem?.images?.map((img, idx) => (
                         <div key={idx} className="relative w-20 h-20 rounded-md overflow-hidden border border-gray-300 shadow-sm">
                           <img src={img} alt={`Product ${idx}`} className="w-full h-full object-cover" />
-                          <button type="button" onClick={() => handleRemoveImage(idx)} className="absolute top-0.5 right-0.5 bg-white rounded-full p-0.5 shadow hover:text-red-500 text-gray-600">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                          <button 
+                            type="button" 
+                            onClick={() => handleRemoveImage(idx)} 
+                            className="absolute top-0.5 right-0.5 bg-white rounded-full p-0.5 shadow hover:text-red-500 text-gray-600"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
                           </button>
                         </div>
                       ))}
@@ -757,71 +846,152 @@ const AdminDashboard = () => {
 
                   <div>
                     <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Product Title</label>
-                    <input required type="text" value={selectedItem?.name} onChange={e => setSelectedItem({...selectedItem, name: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" />
+                    <input 
+                      required 
+                      type="text" 
+                      value={selectedItem?.name} 
+                      onChange={e => setSelectedItem({...selectedItem, name: e.target.value})} 
+                      className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" 
+                    />
                   </div>
                   
-                  <div className="grid grid-cols-3 gap-3">
+                  {/* RESPONSIVE INPUTS FIXED */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Base Retail</label>
-                      <input required type="number" value={selectedItem?.retail} onChange={e => setSelectedItem({...selectedItem, retail: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" />
+                      <input 
+                        required 
+                        type="number" 
+                        value={selectedItem?.retail} 
+                        onChange={e => setSelectedItem({...selectedItem, retail: e.target.value})} 
+                        className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" 
+                      />
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Base WS</label>
-                      <input required type="number" value={selectedItem?.ws} onChange={e => setSelectedItem({...selectedItem, ws: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" />
+                      <input 
+                        required 
+                        type="number" 
+                        value={selectedItem?.ws} 
+                        onChange={e => setSelectedItem({...selectedItem, ws: e.target.value})} 
+                        className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" 
+                      />
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Base Bulk</label>
-                      <input required type="number" value={selectedItem?.bulk} onChange={e => setSelectedItem({...selectedItem, bulk: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" />
+                      <input 
+                        required 
+                        type="number" 
+                        value={selectedItem?.bulk} 
+                        onChange={e => setSelectedItem({...selectedItem, bulk: e.target.value})} 
+                        className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" 
+                      />
                     </div>
                   </div>
-
-                  <div className="grid grid-cols-3 gap-3 bg-gray-50 p-3 rounded-lg border border-gray-100">
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-gray-50 p-3 rounded-lg border border-gray-100">
                     <div>
                       <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Ret MOQ</label>
-                      <input required type="number" min="1" value={selectedItem?.retailMoq} onChange={e => setSelectedItem({...selectedItem, retailMoq: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm focus:outline-none" />
+                      <input 
+                        required 
+                        type="number" 
+                        min="1" 
+                        value={selectedItem?.retailMoq} 
+                        onChange={e => setSelectedItem({...selectedItem, retailMoq: e.target.value})} 
+                        className="w-full p-2 border border-gray-300 rounded text-sm focus:outline-none" 
+                      />
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">WS MOQ</label>
-                      <input required type="number" min="1" value={selectedItem?.wsMoq} onChange={e => setSelectedItem({...selectedItem, wsMoq: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm focus:outline-none" />
+                      <input 
+                        required 
+                        type="number" 
+                        min="1" 
+                        value={selectedItem?.wsMoq} 
+                        onChange={e => setSelectedItem({...selectedItem, wsMoq: e.target.value})} 
+                        className="w-full p-2 border border-gray-300 rounded text-sm focus:outline-none" 
+                      />
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Bulk MOQ</label>
-                      <input required type="number" min="1" value={selectedItem?.bulkMoq} onChange={e => setSelectedItem({...selectedItem, bulkMoq: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm focus:outline-none" />
+                      <input 
+                        required 
+                        type="number" 
+                        min="1" 
+                        value={selectedItem?.bulkMoq} 
+                        onChange={e => setSelectedItem({...selectedItem, bulkMoq: e.target.value})} 
+                        className="w-full p-2 border border-gray-300 rounded text-sm focus:outline-none" 
+                      />
                     </div>
                   </div>
-
+                  
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Main Category (Pill)</label>
-                      <input type="text" placeholder="e.g. Lamps" value={selectedItem?.category || selectedItem?.cat || ''} onChange={e => setSelectedItem({...selectedItem, category: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" />
+                      <input 
+                        type="text" 
+                        placeholder="e.g. Lamps" 
+                        value={selectedItem?.category || selectedItem?.cat || ''} 
+                        onChange={e => setSelectedItem({...selectedItem, category: e.target.value})} 
+                        className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" 
+                      />
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Stock Qty</label>
-                      <input required type="number" min="0" value={selectedItem?.stock} onChange={e => setSelectedItem({...selectedItem, stock: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" />
+                      <input 
+                        required 
+                        type="number" 
+                        min="0" 
+                        value={selectedItem?.stock} 
+                        onChange={e => setSelectedItem({...selectedItem, stock: e.target.value})} 
+                        className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" 
+                      />
                     </div>
                   </div>
 
                   <div>
                     <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Tags (Comma Separated)</label>
-                    <input type="text" placeholder="e.g. brass, gift, diwali" value={selectedItem?.tagsInput || (selectedItem?.tags ? selectedItem.tags.join(', ') : '')} onChange={e => setSelectedItem({...selectedItem, tagsInput: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none text-sm" />
+                    <input 
+                      type="text" 
+                      placeholder="e.g. brass, gift" 
+                      value={selectedItem?.tagsInput || (selectedItem?.tags ? selectedItem.tags.join(', ') : '')} 
+                      onChange={e => setSelectedItem({...selectedItem, tagsInput: e.target.value})} 
+                      className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none text-sm" 
+                    />
                   </div>
                   
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Pack Size</label>
-                      <input type="number" min="1" value={selectedItem?.packSize} onChange={e => setSelectedItem({...selectedItem, packSize: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" />
+                      <input 
+                        type="number" 
+                        min="1" 
+                        value={selectedItem?.packSize} 
+                        onChange={e => setSelectedItem({...selectedItem, packSize: e.target.value})} 
+                        className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" 
+                      />
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Master Carton Size</label>
-                      <input type="number" min="1" placeholder="Optional" value={selectedItem?.cartonSize || ''} onChange={e => setSelectedItem({...selectedItem, cartonSize: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" />
+                      <input 
+                        type="number" 
+                        min="1" 
+                        placeholder="Optional" 
+                        value={selectedItem?.cartonSize || ''} 
+                        onChange={e => setSelectedItem({...selectedItem, cartonSize: e.target.value})} 
+                        className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" 
+                      />
                     </div>
                   </div>
 
-                  {/* ✨ UPDATED: DYNAMIC VARIANTS WITH IMAGE UPLOAD BOX */}
                   <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 mt-2">
                     <div className="flex justify-between items-center mb-3">
                       <label className="block text-xs font-bold text-gray-700 uppercase">Variants (Optional)</label>
-                      <button type="button" onClick={handleAddVariant} className="text-[10px] bg-white border border-gray-300 text-gray-700 px-2 py-1 rounded hover:bg-gray-100 font-bold uppercase tracking-wider shadow-sm">
+                      <button 
+                        type="button" 
+                        onClick={handleAddVariant} 
+                        className="text-[10px] bg-white border border-gray-300 text-gray-700 px-2 py-1 rounded hover:bg-gray-100 font-bold uppercase tracking-wider shadow-sm"
+                      >
                         + Add Option
                       </button>
                     </div>
@@ -829,18 +999,21 @@ const AdminDashboard = () => {
                     {selectedItem?.variants?.length > 0 ? (
                       <div className="space-y-4">
                         <div>
-                          <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Variant Category Label (e.g., Color, Finish, Size)</label>
-                          <input type="text" placeholder="e.g., Finish" value={selectedItem?.variantLabel || ''} onChange={e => setSelectedItem({...selectedItem, variantLabel: e.target.value})} className="w-full p-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#D4AF37]" />
+                          <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Variant Category Label</label>
+                          <input 
+                            type="text" 
+                            placeholder="e.g., Finish" 
+                            value={selectedItem?.variantLabel || ''} 
+                            onChange={e => setSelectedItem({...selectedItem, variantLabel: e.target.value})} 
+                            className="w-full p-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#D4AF37]" 
+                          />
                         </div>
                         
                         <div className="space-y-3">
-                          <p className="text-[10px] text-gray-400 italic mb-1 leading-tight">Leave prices blank to inherit base product prices.</p>
                           {selectedItem.variants.map((variant, idx) => (
                             <div key={idx} className="flex flex-col gap-2 p-3 bg-white border border-gray-200 rounded-md shadow-sm">
                               
                               <div className="flex gap-2 items-center">
-                                
-                                {/* ✨ NEW: Individual Variant Photo Upload Box */}
                                 <label className="relative w-10 h-10 bg-gray-100 border border-dashed border-gray-400 rounded overflow-hidden flex-shrink-0 cursor-pointer hover:border-[#D4AF37] flex items-center justify-center transition-colors">
                                   {variant.image ? (
                                     <img src={variant.image} alt="Var" className="w-full h-full object-cover" />
@@ -850,13 +1023,26 @@ const AdminDashboard = () => {
                                   <input type="file" accept="image/*" className="hidden" onChange={(e) => handleVariantImageUpload(idx, e)} disabled={isProcessing} />
                                 </label>
 
-                                <input type="text" placeholder={`Option ${idx + 1} Name`} value={variant.name} onChange={e => handleVariantChange(idx, 'name', e.target.value)} className="flex-1 p-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#D4AF37]" required />
-                                <button type="button" onClick={() => handleRemoveVariant(idx)} className="text-red-400 hover:text-red-600 font-bold px-2 text-lg leading-none" title="Remove Option">
+                                <input 
+                                  type="text" 
+                                  placeholder={`Option ${idx + 1}`} 
+                                  value={variant.name} 
+                                  onChange={e => handleVariantChange(idx, 'name', e.target.value)} 
+                                  className="flex-1 p-2 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#D4AF37]" 
+                                  required 
+                                />
+                                
+                                <button 
+                                  type="button" 
+                                  onClick={() => handleRemoveVariant(idx)} 
+                                  className="text-red-400 hover:text-red-600 font-bold px-2 text-lg leading-none"
+                                >
                                   &times;
                                 </button>
                               </div>
-
-                              <div className="grid grid-cols-3 gap-2">
+                              
+                              {/* ✨ FIXED UI: Changed grid-cols-3 to sm:grid-cols-3 so it stacks on mobile! */}
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                                 <div>
                                   <label className="block text-[9px] font-bold text-gray-500 uppercase">Ret (Opt)</label>
                                   <input type="number" placeholder="₹" value={variant.retail || ''} onChange={e => handleVariantChange(idx, 'retail', e.target.value)} className="w-full p-1.5 border border-gray-300 rounded text-[11px] focus:outline-none" />
@@ -874,14 +1060,17 @@ const AdminDashboard = () => {
                           ))}
                         </div>
                       </div>
-                    ) : (
-                      <p className="text-[11px] text-gray-500 italic mt-2">No variants. This product will be sold as a single standard item.</p>
-                    )}
+                    ) : <p className="text-[11px] text-gray-500 italic mt-2">No variants.</p>}
                   </div>
-                  
+
                   <div>
                     <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Description</label>
-                    <textarea rows="3" value={selectedItem?.desc} onChange={e => setSelectedItem({...selectedItem, desc: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none"></textarea>
+                    <textarea 
+                      rows="3" 
+                      value={selectedItem?.desc} 
+                      onChange={e => setSelectedItem({...selectedItem, desc: e.target.value})} 
+                      className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none"
+                    ></textarea>
                   </div>
                 </form>
               )}
@@ -896,44 +1085,66 @@ const AdminDashboard = () => {
                     </div>
                   ) : (
                     <div className="bg-blue-50 p-4 rounded-lg mb-6 border border-blue-100">
-                      <p className="text-sm text-blue-800 font-medium">
-                        Pre-approve a client. When they sign up with this email, they will instantly receive the Tier you assign below.
-                      </p>
+                      <p className="text-sm text-blue-800 font-medium">Pre-approve a client.</p>
                     </div>
                   )}
 
                   <div>
                     <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Email Address</label>
-                    <input required type="email" disabled={!!selectedItem?.id} value={selectedItem?.email} onChange={e => setSelectedItem({...selectedItem, email: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none disabled:bg-gray-100" placeholder="client@company.com" />
+                    <input 
+                      required 
+                      type="email" 
+                      disabled={!!selectedItem?.id} 
+                      value={selectedItem?.email} 
+                      onChange={e => setSelectedItem({...selectedItem, email: e.target.value})} 
+                      className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none disabled:bg-gray-100" 
+                    />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Full Name / Company</label>
-                    <input required type="text" value={selectedItem?.name} onChange={e => setSelectedItem({...selectedItem, name: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" />
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Full Name</label>
+                    <input 
+                      required 
+                      type="text" 
+                      value={selectedItem?.name} 
+                      onChange={e => setSelectedItem({...selectedItem, name: e.target.value})} 
+                      className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" 
+                    />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Phone Number</label>
-                    <input type="text" value={selectedItem?.phone} onChange={e => setSelectedItem({...selectedItem, phone: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" />
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Phone</label>
+                    <input 
+                      type="text" 
+                      value={selectedItem?.phone} 
+                      onChange={e => setSelectedItem({...selectedItem, phone: e.target.value})} 
+                      className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" 
+                    />
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Pricing Tier</label>
-                      <select value={selectedItem?.tier} onChange={e => setSelectedItem({...selectedItem, tier: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none cursor-pointer">
+                      <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Tier</label>
+                      <select 
+                        value={selectedItem?.tier} 
+                        onChange={e => setSelectedItem({...selectedItem, tier: e.target.value})} 
+                        className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none"
+                      >
                         <option value="retail">Retail</option>
                         <option value="wholesale">Wholesale</option>
                         <option value="bulk">Bulk</option>
-                        <option disabled>──────────</option>
-                        <option value="staff">Staff (Internal)</option>
-                        <option value="management">Management (Internal)</option>
-                        <option value="admin">Admin (Internal)</option>
+                        <option value="admin">Admin</option>
                       </select>
                     </div>
+
                     <div>
-                      <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Account Status</label>
-                      <select value={selectedItem?.status || 'active'} onChange={e => setSelectedItem({...selectedItem, status: e.target.value})} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none cursor-pointer">
-                        <option value="active">Active (Approved)</option>
+                      <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Status</label>
+                      <select 
+                        value={selectedItem?.status || 'active'} 
+                        onChange={e => setSelectedItem({...selectedItem, status: e.target.value})} 
+                        className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none"
+                      >
+                        <option value="active">Active</option>
                         <option value="pending">Pending</option>
                         <option value="pre_approved">Pre-Approved</option>
                       </select>
@@ -945,22 +1156,26 @@ const AdminDashboard = () => {
 
             <div className="p-6 border-t border-gray-100 bg-white flex flex-col gap-3">
               <button 
-                type="submit" form="drawerForm" disabled={isProcessing}
+                type="submit" 
+                form="drawerForm" 
+                disabled={isProcessing} 
                 className="w-full bg-[#111111] text-white py-3.5 rounded-md font-bold hover:bg-black transition shadow-md disabled:opacity-50 uppercase tracking-wide"
               >
                 {isProcessing ? 'Saving...' : `Save ${drawerType}`}
               </button>
               
               {selectedItem?.id && (
-                 <button 
-                   type="button" onClick={() => handleDelete(drawerType === 'product' ? 'products' : 'customers', selectedItem.id)} disabled={isProcessing}
-                   className="w-full bg-white text-red-600 border border-red-200 py-3 rounded-md font-bold hover:bg-red-50 transition disabled:opacity-50 uppercase tracking-wide text-sm"
-                 >
-                   Delete {drawerType}
-                 </button>
+                <button 
+                  type="button" 
+                  onClick={() => handleDelete(drawerType === 'product' ? 'products' : 'customers', selectedItem.id)} 
+                  disabled={isProcessing} 
+                  className="w-full bg-white text-red-600 border border-red-200 py-3 rounded-md font-bold hover:bg-red-50 transition disabled:opacity-50 uppercase tracking-wide text-sm"
+                >
+                  Delete {drawerType}
+                </button>
               )}
             </div>
-
+            
           </div>
         </div>
       )}

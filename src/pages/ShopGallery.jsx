@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, getDocs, query } from 'firebase/firestore';
+import { collection, getDocs, query, getDoc, doc } from 'firebase/firestore';
 import { db } from '../firebase';
 import ProductCard from '../components/ProductCard';
 import { useCart } from '../context/CartContext';
@@ -25,6 +25,8 @@ const ShopGallery = () => {
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' ? window.innerWidth < 768 : true);
   const [viewMode, setViewMode] = useState(2); 
   const [isFilterSheetOpen, setIsFilterSheetOpen] = useState(false);
+
+  const [hideOutOfStock, setHideOutOfStock] = useState(false);
   
   const { addToCart, getTierDetails, cart, updateQuantity, removeFromCart } = useCart(); 
   const { searchQuery, userTier, presentationMode } = useAuth(); 
@@ -38,7 +40,6 @@ const ShopGallery = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // ✨ MODAL SCROLL SNAPPING: Resets the image scroller back to 0 when a variant is clicked
   useEffect(() => {
     const scroller = document.getElementById('modal-image-scroller');
     if (scroller) scroller.scrollLeft = 0;
@@ -56,7 +57,18 @@ const ShopGallery = () => {
   }, [searchQuery, selectedCategory, sortOrder]);
 
   useEffect(() => {
-    const fetchAllProducts = async () => {
+    const fetchAllProductsAndSettings = async () => {
+      // ✨ BULLETPROOF FIX: Isolate the settings fetch so it NEVER crashes the gallery
+      try {
+        const settingsSnap = await getDoc(doc(db, 'settings', 'general'));
+        if (settingsSnap.exists()) {
+          setHideOutOfStock(settingsSnap.data().hideOutOfStock || false);
+        }
+      } catch (settingsError) {
+        console.warn("Could not fetch Master Switch settings. Defaulting to false.", settingsError);
+      }
+
+      // Proceed to fetch products regardless of settings outcome
       try {
         const q = query(collection(db, 'products'));
         const snapshot = await getDocs(q);
@@ -69,12 +81,12 @@ const ShopGallery = () => {
         });
         setInventory(fetchedProducts);
       } catch (error) {
-        console.error(error);
+        console.error("Error fetching products:", error);
       } finally {
         setLoading(false);
       }
     };
-    fetchAllProducts();
+    fetchAllProductsAndSettings();
   }, []);
 
   const uniqueCategories = useMemo(() => {
@@ -108,6 +120,11 @@ const ShopGallery = () => {
 
   const processedInventory = useMemo(() => {
     let filtered = inventory.filter((product) => {
+      // THE MASTER SWITCH LOGIC
+      if (hideOutOfStock && !isInternalTeam && product.stock <= 0) {
+        return false;
+      }
+
       const q = (searchQuery || "").toLowerCase();
       const matchesSearch = !q || (product.title || "").toLowerCase().includes(q) || (product.category || "").toLowerCase().includes(q) || (product.tags || []).some(t => t.toLowerCase().includes(q));
       const matchesCategory = selectedCategory === 'All' || product.category === selectedCategory;
@@ -126,7 +143,7 @@ const ShopGallery = () => {
       if (sortOrder === 'nameAsc') return a.title.localeCompare(b.title);
       return b.createdAt - a.createdAt;
     });
-  }, [inventory, searchQuery, selectedCategory, sortOrder]);
+  }, [inventory, searchQuery, selectedCategory, sortOrder, hideOutOfStock, isInternalTeam]);
 
   const getGridStyle = () => {
     if (!isMobile) return { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '24px', padding: '0 5%' };
@@ -135,23 +152,16 @@ const ShopGallery = () => {
     if (viewMode === 3) return { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', padding: '0 16px' };
   };
 
-  // ✨ SMART MODAL IMAGES: Implements the fallback logic and pushes active variant to the front
   const modalImages = useMemo(() => {
     if (!selectedProduct) return [];
-    
     let base = selectedProduct.images?.length > 0 ? selectedProduct.images : (selectedProduct.image ? [selectedProduct.image] : []);
-    
-    // Fallback: Use all variant images if no base image exists
     if (base.length === 0 && selectedProduct.variants?.length > 0) {
       base = selectedProduct.variants.map(v => v.image).filter(Boolean);
     }
-
-    // Force the selected variant's image to index [0]
     if (activeVariant && activeVariant.image) {
       const others = base.filter(img => img !== activeVariant.image);
       return [activeVariant.image, ...others];
     }
-
     return base;
   }, [selectedProduct, activeVariant]);
 
