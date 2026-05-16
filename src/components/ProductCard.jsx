@@ -13,9 +13,7 @@ const ProductCard = ({ productData, onOpenModal, viewMode = 2, presentationMode 
   const showCartonInfo = ['admin', 'staff', 'management', 'bulk'].includes(userTier);
 
   const isCompact = viewMode === 3;
-  const dynamicImageHeight = viewMode === 1 ? '240px' : viewMode === 3 ? '120px' : '180px';
 
-  // ✨ SMART FALLBACK: If no base images, collect all available variant images to build the gallery
   let imageArray = productData.images?.length > 0 ? productData.images : (productData.image ? [productData.image] : []);
   if (imageArray.length === 0 && hasVariants) {
     imageArray = productData.variants.map(v => v.image).filter(Boolean); 
@@ -23,8 +21,12 @@ const ProductCard = ({ productData, onOpenModal, viewMode = 2, presentationMode 
 
   return (
     <div style={{...styles.card, opacity: isOutOfStock ? 0.7 : 1}}>
-      <div style={{...styles.imageContainer, height: dynamicImageHeight}} onClick={() => onOpenModal(productData)}>
-        
+      
+      {/* ✨ FIXED: Removed fixed height, added aspect-ratio for perfect proportional scaling */}
+      <div 
+        style={{...styles.imageContainer, aspectRatio: isCompact ? 'auto' : '1 / 1', height: isCompact ? '120px' : 'auto'}} 
+        onClick={() => onOpenModal(productData)}
+      >
         {imageArray.length === 0 ? (
           <img src="https://via.placeholder.com/400?text=No+Image" style={styles.image} alt="Placeholder" />
         ) : (
@@ -108,7 +110,7 @@ const ProductCard = ({ productData, onOpenModal, viewMode = 2, presentationMode 
 
 const styles = {
   card: { backgroundColor: '#FFF', borderRadius: '8px', border: '1px solid #EAEAEA', overflow: 'hidden', display: 'flex', flexDirection: 'column', transition: 'all 0.2s' },
-  imageContainer: { backgroundColor: '#FAFAFA', position: 'relative', cursor: 'pointer', borderBottom: '1px solid #EAEAEA', overflow: 'hidden', transition: 'height 0.2s ease-out' },
+  imageContainer: { backgroundColor: '#FAFAFA', position: 'relative', cursor: 'pointer', borderBottom: '1px solid #EAEAEA', overflow: 'hidden', transition: 'all 0.2s ease-out' },
   scroller: { display: 'flex', overflowX: 'auto', scrollSnapType: 'x mandatory', width: '100%', height: '100%', scrollbarWidth: 'none' },
   imageWrapper: { flex: '0 0 100%', width: '100%', height: '100%', position: 'relative', scrollSnapAlign: 'start', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   auraBackground: { position: 'absolute', top: '-10%', left: '-10%', right: '-10%', bottom: '-10%', backgroundSize: 'cover', backgroundPosition: 'center', filter: 'blur(10px)', opacity: 0.3, zIndex: 0 },

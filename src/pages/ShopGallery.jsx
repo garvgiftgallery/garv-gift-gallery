@@ -34,6 +34,7 @@ const ShopGallery = () => {
   const isInternalTeam = ['admin', 'staff', 'management'].includes(userTier);
   const showCartonInfo = ['admin', 'staff', 'management', 'bulk'].includes(userTier);
 
+  // Responsive Screen Detection
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener('resize', handleResize);
@@ -58,7 +59,6 @@ const ShopGallery = () => {
 
   useEffect(() => {
     const fetchAllProductsAndSettings = async () => {
-      // ✨ BULLETPROOF FIX: Isolate the settings fetch so it NEVER crashes the gallery
       try {
         const settingsSnap = await getDoc(doc(db, 'settings', 'general'));
         if (settingsSnap.exists()) {
@@ -68,7 +68,6 @@ const ShopGallery = () => {
         console.warn("Could not fetch Master Switch settings. Defaulting to false.", settingsError);
       }
 
-      // Proceed to fetch products regardless of settings outcome
       try {
         const q = query(collection(db, 'products'));
         const snapshot = await getDocs(q);
@@ -120,7 +119,6 @@ const ShopGallery = () => {
 
   const processedInventory = useMemo(() => {
     let filtered = inventory.filter((product) => {
-      // THE MASTER SWITCH LOGIC
       if (hideOutOfStock && !isInternalTeam && product.stock <= 0) {
         return false;
       }
@@ -145,8 +143,18 @@ const ShopGallery = () => {
     });
   }, [inventory, searchQuery, selectedCategory, sortOrder, hideOutOfStock, isInternalTeam]);
 
+  // ✨ PERFECTED ULTRA-WIDE ALIGNMENT
   const getGridStyle = () => {
-    if (!isMobile) return { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '24px', padding: '0 5%' };
+    if (!isMobile) return { 
+        display: 'grid', 
+        gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', 
+        gap: '28px', 
+        padding: '0 32px', // Matches the 32px side margin of the Control Pill perfectly
+        width: '100%',
+        boxSizing: 'border-box'
+    };
+    
+    // Mobile layouts
     if (viewMode === 1) return { display: 'grid', gridTemplateColumns: '1fr', gap: '16px', padding: '0 16px' };
     if (viewMode === 2) return { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', padding: '0 16px' };
     if (viewMode === 3) return { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', padding: '0 16px' };
@@ -165,13 +173,18 @@ const ShopGallery = () => {
     return base;
   }, [selectedProduct, activeVariant]);
 
-
   if (loading) return <div style={styles.emptyState}>Loading Catalogue...</div>;
 
   return (
-    <div style={{ paddingBottom: '40px', position: 'relative' }}>
+    <div style={{ paddingBottom: '40px', position: 'relative', width: '100%' }}>
       
-      <div style={styles.stickyControlBar}>
+      {/* ✨ PERFECTED FULL-WIDTH PILL BAR */}
+      <div style={{
+          ...styles.stickyControlBar,
+          borderRadius: '50px', // Forces the oval shape
+          margin: isMobile ? '16px 16px 24px 16px' : '16px 32px 32px 32px', // Exact 32px side gap on desktop
+          width: 'auto' // Stretches to fill the screen while respecting the 32px margin
+      }}>
         {isMobile && (
           <div style={styles.layoutToggles}>
             <button onClick={() => setViewMode(1)} style={viewMode === 1 ? styles.iconActive : styles.iconInactive}>
@@ -248,6 +261,7 @@ const ShopGallery = () => {
         </div>
       )}
 
+      {/* MODAL CODE REMAINS UNCHANGED */}
       {selectedProduct && (
         <div style={styles.modalOverlay} onClick={() => setSelectedProduct(null)}>
           <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
@@ -374,7 +388,21 @@ const ShopGallery = () => {
 };
 
 const styles = {
-  stickyControlBar: { position: 'sticky', top: '16px', zIndex: 40, backgroundColor: 'rgba(255, 255, 255, 0.9)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', border: '1px solid rgba(212, 175, 55, 0.4)', borderRadius: '50px', padding: '6px 12px', margin: '0 16px 24px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', boxShadow: '0 10px 40px rgba(0,0,0,0.08)' },
+  stickyControlBar: { 
+    position: 'sticky', 
+    top: '16px', 
+    zIndex: 40, 
+    backgroundColor: 'rgba(255, 255, 255, 0.95)', 
+    backdropFilter: 'blur(16px)', 
+    WebkitBackdropFilter: 'blur(16px)', 
+    border: '1px solid rgba(212, 175, 55, 0.3)', 
+    padding: '10px 24px', 
+    display: 'flex', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    gap: '16px', 
+    boxShadow: '0 10px 40px rgba(0,0,0,0.06)' 
+  },
   layoutToggles: { display: 'flex', gap: '4px' },
   iconActive: { background: '#111', color: '#FFF', border: 'none', borderRadius: '50%', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s' },
   iconInactive: { background: 'transparent', color: '#888', border: 'none', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s' },

@@ -28,9 +28,12 @@ function App() {
         }}
       >
         <Navbar />
+        
+        {/* ✨ FIXED: Removed 'lg:max-w-[1400px]' and horizontal padding (5%). 
+            This allows the inner components (like ShopGallery) to stretch edge-to-edge! */}
         <main 
-          className="w-full lg:max-w-[1400px] mx-auto flex-1" 
-          style={{ padding: '2rem 5%' }}
+          className="w-full flex-1" 
+          style={{ paddingTop: '2rem', paddingBottom: '2rem' }}
         >
           <Routes>
             {/* Customer Routes */}
