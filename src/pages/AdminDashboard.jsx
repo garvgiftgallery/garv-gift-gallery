@@ -24,12 +24,12 @@ const AdminDashboard = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('newest');
 
-  // --- ✨ CUSTOMER TAB STATES ---
+  // --- CUSTOMER TAB STATES ---
   const [customerViewMode, setCustomerViewMode] = useState('grid');
   const [customerSearchQuery, setCustomerSearchQuery] = useState('');
   const [customerSortBy, setCustomerSortBy] = useState('newest');
 
-  // --- ✨ GLOBAL SETTINGS STATE ---
+  // --- GLOBAL SETTINGS STATE ---
   const [hideOutOfStock, setHideOutOfStock] = useState(false);
 
   // --- Drawer States ---
@@ -42,7 +42,6 @@ const AdminDashboard = () => {
     fetchSettings();
   }, []);
 
-  // Fetch Global Settings
   const fetchSettings = async () => {
     try {
       const snap = await getDoc(doc(db, 'settings', 'general'));
@@ -56,13 +55,13 @@ const AdminDashboard = () => {
 
   const toggleHideOutOfStock = async () => {
     const newValue = !hideOutOfStock;
-    setHideOutOfStock(newValue); // Optimistic UI update
+    setHideOutOfStock(newValue); 
     try {
       await setDoc(doc(db, 'settings', 'general'), { hideOutOfStock: newValue }, { merge: true });
     } catch (error) {
       console.error("Error updating settings:", error);
       alert("Failed to save settings to database.");
-      setHideOutOfStock(!newValue); // Revert on failure
+      setHideOutOfStock(!newValue); 
     }
   };
 
@@ -94,7 +93,8 @@ const AdminDashboard = () => {
         packSize: 1, cartonSize: '', stock: 100, category: '', tagsInput: '', desc: '', images: [], variantLabel: '', variants: [] 
       });
     } else if (type === 'customer') {
-      setSelectedItem(item || { name: '', email: '', phone: '', tier: 'retail', status: 'active' });
+      // ✨ FIXED: Default to 'pre_approved' when creating a new customer manually
+      setSelectedItem(item || { name: '', email: '', phone: '', tier: 'wholesale', status: 'pre_approved' });
     }
     setIsDrawerOpen(true);
   };
@@ -137,24 +137,37 @@ const AdminDashboard = () => {
     }
   };
 
+  // --- ✨ FIXED: CUSTOMER SAVE / PRE-APPROVE LOGIC ---
   const handleSaveCustomer = async (e) => {
     e.preventDefault();
+
+    // 🔒 REQUIREMENT: Must have at least one contact method
+    if (!selectedItem.email && !selectedItem.phone) {
+      alert("Please provide either an Email Address or a Phone Number.");
+      return;
+    }
+
     setIsProcessing(true);
     try {
+      // Safely handle missing emails/phones so .toLowerCase() doesn't crash
+      const safeEmail = selectedItem.email ? selectedItem.email.trim().toLowerCase() : '';
+      const safePhone = selectedItem.phone ? selectedItem.phone.trim() : '';
+
       if (selectedItem.id) {
         await updateDoc(doc(db, 'customers', selectedItem.id), {
           name: selectedItem.name,
-          phone: selectedItem.phone,
+          email: safeEmail,
+          phone: safePhone,
           tier: selectedItem.tier,
           status: selectedItem.status || 'active'
         });
       } else {
         await addDoc(collection(db, 'customers'), {
           name: selectedItem.name,
-          email: selectedItem.email.toLowerCase(),
-          phone: selectedItem.phone,
+          email: safeEmail,
+          phone: safePhone,
           tier: selectedItem.tier,
-          status: 'pre_approved',
+          status: selectedItem.status || 'pre_approved',
           createdAt: serverTimestamp()
         });
       }
@@ -168,6 +181,7 @@ const AdminDashboard = () => {
     }
   };
 
+  // --- ✨ FIXED: APPROVE AND EMAIL LOGIC ---
   const handleApproveAndEmail = async (customer) => {
     setIsProcessing(true);
     try {
@@ -176,10 +190,14 @@ const AdminDashboard = () => {
         tier: 'wholesale' 
       });
       
-      const subject = encodeURIComponent("Your Garv Gift Gallery Account is Approved!");
-      const body = encodeURIComponent(`Hi ${customer.name || 'Valued Customer'},\n\nGreat news! Your account at Garv Gift Gallery has been approved.\n\nYou have been upgraded to our Wholesale tier. You can now log in to view our premium catalogue and access your exclusive pricing.\n\nThank you,\nGarv Gift Gallery`);
-      
-      window.location.href = `mailto:${customer.email}?subject=${subject}&body=${body}`;
+      // If they have an email, draft the message. If not, just approve them!
+      if (customer.email) {
+        const subject = encodeURIComponent("Your Garv Gift Gallery Account is Approved!");
+        const body = encodeURIComponent(`Hi ${customer.name || 'Valued Customer'},\n\nGreat news! Your account at Garv Gift Gallery has been approved.\n\nYou have been upgraded to our Wholesale tier. You can now log in to view our premium catalogue and access your exclusive pricing.\n\nThank you,\nGarv Gift Gallery`);
+        window.location.href = `mailto:${customer.email}?subject=${subject}&body=${body}`;
+      } else {
+        alert(`Account for ${customer.name || customer.phone} has been Approved! (No email on file to notify them).`);
+      }
       
       await fetchData();
     } catch (err) {
@@ -456,7 +474,6 @@ const AdminDashboard = () => {
     });
   }, [products, searchQuery, sortBy]);
 
-  // --- ✨ CUSTOMER FILTERING & SORTING LOGIC ---
   const filteredActiveCustomers = useMemo(() => {
     return customers
       .filter(c => c.status !== 'pending')
@@ -469,7 +486,6 @@ const AdminDashboard = () => {
       .sort((a, b) => {
          if (customerSortBy === 'nameAsc') return (a.name || '').localeCompare(b.name || '');
          if (customerSortBy === 'tier') return (a.tier || '').localeCompare(b.tier || '');
-         // newest fallback
          return (b.createdAt?.toMillis ? b.createdAt.toMillis() : 0) - (a.createdAt?.toMillis ? a.createdAt.toMillis() : 0);
       });
   }, [customers, customerSearchQuery, customerSortBy]);
@@ -478,7 +494,6 @@ const AdminDashboard = () => {
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 relative bg-[#F9F8F6] min-h-screen">
       
-      {/* ✨ UPDATED HEADER WITH MASTER SWITCH */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-gray-200 pb-6 mb-6 gap-4">
         <div>
           <h2 className="text-3xl font-bold text-gray-900 tracking-tight uppercase">Control Center</h2>
@@ -516,7 +531,6 @@ const AdminDashboard = () => {
         ))}
       </div>
 
-      {/* TAB CONTENT: INVENTORY */}
       {activeTab === 'inventory' && (
         <div className="space-y-4">
           <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex flex-col md:flex-row gap-4 justify-between items-center">
@@ -596,7 +610,6 @@ const AdminDashboard = () => {
               {orders.map((order) => (
                 <div key={order.id} className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm flex flex-col gap-4 relative overflow-hidden transition hover:border-[#D4AF37]">
                   
-                  {/* Order Header */}
                   <div className="flex justify-between items-start border-b border-gray-100 pb-4">
                     <div>
                       <h4 className="font-bold text-gray-900 tracking-tight">Order #{order.id.slice(0, 6).toUpperCase()}</h4>
@@ -609,7 +622,6 @@ const AdminDashboard = () => {
                     </span>
                   </div>
                   
-                  {/* Customer Info */}
                   <div className="text-sm text-gray-600 space-y-1">
                     <p className="flex items-center justify-between">
                       <span className="font-semibold text-gray-900">Customer:</span> {order.customerName}
@@ -625,7 +637,6 @@ const AdminDashboard = () => {
                     </p>
                   </div>
 
-                  {/* Order Items Receipt */}
                   <div className="bg-[#F9F8F6] p-4 rounded-lg border border-gray-200 mt-auto">
                     <p className="text-[10px] font-bold text-gray-500 uppercase mb-3 tracking-wider">Itemized Receipt</p>
                     <ul className="text-sm space-y-2 mb-3">
@@ -697,11 +708,10 @@ const AdminDashboard = () => {
                   <div key={cust.id} className="bg-white p-5 rounded-xl border border-orange-200 shadow-sm flex flex-col justify-between relative">
                     <div className="mb-4">
                       <h4 className="font-bold text-gray-900">{cust.name}</h4>
-                      <p className="text-sm text-gray-500">{cust.email}</p>
+                      <p className="text-sm text-gray-500">{cust.email || 'No Email'}</p>
                       <p className="text-xs text-gray-400 mt-1">{cust.phone || 'No Phone'}</p>
                     </div>
                     
-                    {/* RESTORED: Approve and Email buttons */}
                     <div className="flex gap-2">
                       <button 
                         onClick={() => {
@@ -717,7 +727,7 @@ const AdminDashboard = () => {
                         disabled={isProcessing} 
                         className="flex-1 bg-[#111111] text-white text-xs font-bold py-2 rounded hover:bg-black transition uppercase disabled:opacity-50 shadow-sm"
                       >
-                        Approve & Email
+                        Approve
                       </button>
                     </div>
 
@@ -727,7 +737,7 @@ const AdminDashboard = () => {
             </div>
           )}
 
-          {/* ✨ UPGRADED ACTIVE ROSTER WITH SORT, SEARCH & GRID/LIST */}
+          {/* ACTIVE ROSTER */}
           <div>
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4">
               <h3 className="text-gray-900 font-bold uppercase tracking-wider m-0">Active Roster</h3>
@@ -772,7 +782,7 @@ const AdminDashboard = () => {
                   )}
                   <div>
                     <h4 className="font-bold text-gray-900">{cust.name || 'Valued Customer'}</h4>
-                    <p className="text-sm text-gray-500">{cust.email}</p>
+                    <p className="text-sm text-gray-500">{cust.email || 'No Email'}</p>
                     {customerViewMode === 'grid' && (
                       <p className="text-xs text-gray-400 mt-1">{cust.phone || 'No Phone'}</p>
                     )}
@@ -780,7 +790,7 @@ const AdminDashboard = () => {
                   <div className={customerViewMode === 'grid' ? 'mt-4' : ''}>
                     <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border ${
                       cust.tier === 'admin' ? 'bg-red-50 text-red-700 border-red-200' : 
-                      cust.tier === 'wholesale' ? 'bg-blue-50 text-blue-700 border-blue-200' : 
+                      ['wholesale', 'management', 'staff'].includes(cust.tier) ? 'bg-blue-50 text-blue-700 border-blue-200' : 
                       cust.tier === 'bulk' ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-gray-50 text-gray-700 border-gray-200'
                     }`}>
                       {cust.tier || 'Retail'}
@@ -797,7 +807,6 @@ const AdminDashboard = () => {
           
         </div>
       )}
-
 
       {/* --- 🚀 THE SLIDE-OVER DRAWER --- */}
       {isDrawerOpen && (
@@ -819,7 +828,6 @@ const AdminDashboard = () => {
               {drawerType === 'product' && (
                 <form id="drawerForm" onSubmit={handleSaveProduct} className="space-y-5">
                   
-                  {/* MULTIPLE IMAGE MANAGEMENT */}
                   <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
                     <div className="flex flex-wrap gap-3 mb-3">
                       {selectedItem?.images?.map((img, idx) => (
@@ -855,7 +863,6 @@ const AdminDashboard = () => {
                     />
                   </div>
                   
-                  {/* RESPONSIVE INPUTS FIXED */}
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Base Retail</label>
@@ -1041,7 +1048,6 @@ const AdminDashboard = () => {
                                 </button>
                               </div>
                               
-                              {/* ✨ FIXED UI: Changed grid-cols-3 to sm:grid-cols-3 so it stacks on mobile! */}
                               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                                 <div>
                                   <label className="block text-[9px] font-bold text-gray-500 uppercase">Ret (Opt)</label>
@@ -1085,17 +1091,17 @@ const AdminDashboard = () => {
                     </div>
                   ) : (
                     <div className="bg-blue-50 p-4 rounded-lg mb-6 border border-blue-100">
-                      <p className="text-sm text-blue-800 font-medium">Pre-approve a client.</p>
+                      <p className="text-sm text-blue-800 font-medium">Pre-approve a client. Ensure you add EITHER their phone or email below.</p>
                     </div>
                   )}
 
+                  {/* ✨ FIXED: Removed 'required' attribute so you can save with just a phone number */}
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Email Address</label>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Email Address <span className="text-gray-400 font-normal lowercase">(Optional if phone is provided)</span></label>
                     <input 
-                      required 
                       type="email" 
-                      disabled={!!selectedItem?.id} 
-                      value={selectedItem?.email} 
+                      disabled={!!selectedItem?.id && !!selectedItem?.email} 
+                      value={selectedItem?.email || ''} 
                       onChange={e => setSelectedItem({...selectedItem, email: e.target.value})} 
                       className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none disabled:bg-gray-100" 
                     />
@@ -1106,17 +1112,18 @@ const AdminDashboard = () => {
                     <input 
                       required 
                       type="text" 
-                      value={selectedItem?.name} 
+                      value={selectedItem?.name || ''} 
                       onChange={e => setSelectedItem({...selectedItem, name: e.target.value})} 
                       className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" 
                     />
                   </div>
 
+                  {/* ✨ FIXED: Allowed phone as primary contact method */}
                   <div>
-                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Phone</label>
+                    <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Phone Number <span className="text-gray-400 font-normal lowercase">(Optional if email is provided)</span></label>
                     <input 
                       type="text" 
-                      value={selectedItem?.phone} 
+                      value={selectedItem?.phone || ''} 
                       onChange={e => setSelectedItem({...selectedItem, phone: e.target.value})} 
                       className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none" 
                     />
@@ -1126,23 +1133,26 @@ const AdminDashboard = () => {
                     <div>
                       <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Tier</label>
                       <select 
-                        value={selectedItem?.tier} 
+                        value={selectedItem?.tier || 'retail'} 
                         onChange={e => setSelectedItem({...selectedItem, tier: e.target.value})} 
-                        className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none"
+                        className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none cursor-pointer"
                       >
                         <option value="retail">Retail</option>
                         <option value="wholesale">Wholesale</option>
                         <option value="bulk">Bulk</option>
-                        <option value="admin">Admin</option>
+                        <option disabled>──────────</option>
+                        <option value="staff">Staff (Internal)</option>
+                        <option value="management">Management (Internal)</option>
+                        <option value="admin">Admin (Internal)</option>
                       </select>
                     </div>
 
                     <div>
                       <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Status</label>
                       <select 
-                        value={selectedItem?.status || 'active'} 
+                        value={selectedItem?.status || 'pre_approved'} 
                         onChange={e => setSelectedItem({...selectedItem, status: e.target.value})} 
-                        className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none"
+                        className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-[#D4AF37] focus:outline-none cursor-pointer"
                       >
                         <option value="active">Active</option>
                         <option value="pending">Pending</option>

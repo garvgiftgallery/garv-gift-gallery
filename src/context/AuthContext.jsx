@@ -12,33 +12,40 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // ✨ NEW: Global state for Staff/Admin Pricing Presentation Mode
-  // Options: 'all', 'retail', 'wholesale', 'bulk'
   const [presentationMode, setPresentationMode] = useState('all');
 
-  // ⚠️ REPLACE THIS WITH YOUR ACTUAL ADMIN EMAIL
   const ADMIN_EMAIL = "garvgiftgallery@gmail.com"; 
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setCurrentUser(user);
-      
       if (user) {
-        // 1. Check if this is the Admin logging in
         if (user.email === ADMIN_EMAIL) {
+          setCurrentUser(user);
           setUserTier('admin');
         } else {
-          // 2. This is a Customer. Fetch their tier using their unique UID!
           const docRef = doc(db, 'customers', user.uid);
           const docSnap = await getDoc(docRef);
           
-          if (docSnap.exists() && docSnap.data().tier) {
-            setUserTier(docSnap.data().tier); // Apply their secure database tier
+          if (docSnap.exists()) {
+            const data = docSnap.data();
+            
+            // 🔒 SECURITY GATE: If user is somehow logged in but marked pending, kick them out
+            if (data.status === 'pending') {
+              await signOut(auth);
+              setCurrentUser(null);
+              setUserTier('guest');
+            } else {
+              setCurrentUser(user);
+              setUserTier(data.tier || 'retail');
+            }
           } else {
-            setUserTier('retail'); // Fallback for brand new users
+            // Document doesn't exist yet (rare during signup flow), just set as guest until verified
+            setCurrentUser(user);
+            setUserTier('guest');
           }
         }
       } else {
+        setCurrentUser(null);
         setUserTier('guest');
       }
       setLoading(false);
@@ -50,7 +57,7 @@ export const AuthProvider = ({ children }) => {
   
   const logout = async () => {
     await signOut(auth);
-    setPresentationMode('all'); // Reset presentation mode on logout
+    setPresentationMode('all'); 
   };
   
   const isPremiumTier = userTier === 'wholesale' || userTier === 'bulk';
@@ -59,7 +66,7 @@ export const AuthProvider = ({ children }) => {
     <AuthContext.Provider value={{ 
       currentUser, userTier, isPremiumTier, 
       login, logout, searchQuery, setSearchQuery,
-      presentationMode, setPresentationMode // ✨ NEW: Provided to the app
+      presentationMode, setPresentationMode
     }}>
       {!loading && children}
     </AuthContext.Provider>
