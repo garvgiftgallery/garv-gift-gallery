@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { collection, getDocs, doc, updateDoc, addDoc, deleteDoc, query, orderBy, writeBatch, serverTimestamp, getDoc, setDoc } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../firebase';
@@ -7,6 +7,8 @@ import { useNavigate } from 'react-router-dom';
 import Papa from 'papaparse'; 
 import DOMPurify from 'dompurify';
 import heic2any from 'heic2any'; 
+// ✨ ADDED: Import the useDropzone hook
+import { useDropzone } from 'react-dropzone';
 
 const AdminDashboard = () => {
   const { logout } = useAuth();
@@ -93,7 +95,6 @@ const AdminDashboard = () => {
         packSize: 1, cartonSize: '', stock: 100, category: '', tagsInput: '', desc: '', images: [], variantLabel: '', variants: [] 
       });
     } else if (type === 'customer') {
-      // ✨ FIXED: Default to 'pre_approved' when creating a new customer manually
       setSelectedItem(item || { name: '', email: '', phone: '', tier: 'wholesale', status: 'pre_approved' });
     }
     setIsDrawerOpen(true);
@@ -137,11 +138,9 @@ const AdminDashboard = () => {
     }
   };
 
-  // --- ✨ FIXED: CUSTOMER SAVE / PRE-APPROVE LOGIC ---
   const handleSaveCustomer = async (e) => {
     e.preventDefault();
 
-    // 🔒 REQUIREMENT: Must have at least one contact method
     if (!selectedItem.email && !selectedItem.phone) {
       alert("Please provide either an Email Address or a Phone Number.");
       return;
@@ -149,7 +148,6 @@ const AdminDashboard = () => {
 
     setIsProcessing(true);
     try {
-      // Safely handle missing emails/phones so .toLowerCase() doesn't crash
       const safeEmail = selectedItem.email ? selectedItem.email.trim().toLowerCase() : '';
       const safePhone = selectedItem.phone ? selectedItem.phone.trim() : '';
 
@@ -181,7 +179,6 @@ const AdminDashboard = () => {
     }
   };
 
-  // --- ✨ FIXED: APPROVE AND EMAIL LOGIC ---
   const handleApproveAndEmail = async (customer) => {
     setIsProcessing(true);
     try {
@@ -190,7 +187,6 @@ const AdminDashboard = () => {
         tier: 'wholesale' 
       });
       
-      // If they have an email, draft the message. If not, just approve them!
       if (customer.email) {
         const subject = encodeURIComponent("Your Garv Gift Gallery Account is Approved!");
         const body = encodeURIComponent(`Hi ${customer.name || 'Valued Customer'},\n\nGreat news! Your account at Garv Gift Gallery has been approved.\n\nYou have been upgraded to our Wholesale tier. You can now log in to view our premium catalogue and access your exclusive pricing.\n\nThank you,\nGarv Gift Gallery`);
@@ -305,9 +301,9 @@ const AdminDashboard = () => {
     });
   };
 
-  const handleImageUpload = async (event) => {
-    const files = Array.from(event.target.files);
-    if (!files.length) return;
+  // ✨ MODIFIED: Now accepts an array of files directly from react-dropzone
+  const handleImageUpload = async (files) => {
+    if (!files || !files.length) return;
     setIsProcessing(true);
     try {
       const newImageUrls = [];
@@ -327,6 +323,17 @@ const AdminDashboard = () => {
       setIsProcessing(false);
     }
   };
+
+  // ✨ ADDED: Configuration for the react-dropzone hook
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop: handleImageUpload,
+    accept: {
+      'image/*': ['.jpeg', '.jpg', '.png', '.webp'],
+      'image/heic': ['.heic'],
+      'image/heif': ['.heif']
+    },
+    disabled: isProcessing
+  });
 
   const handleVariantImageUpload = async (index, event) => {
     const file = event.target.files[0];
@@ -379,51 +386,68 @@ const AdminDashboard = () => {
     const file = event.target.files[0];
     if (!file) return;
     setIsProcessing(true);
+
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
       complete: async (results) => {
         try {
-          const batch = writeBatch(db);
           let count = 0;
           
-          results.data.forEach((row) => {
-            if (!row.name && !row.title) return; 
-            const safeTitle = DOMPurify.sanitize(row.name || row.title);
-            const existingProduct = products.find(p => (p.name || p.title || "").toLowerCase() === safeTitle.toLowerCase());
-            const docRef = existingProduct ? doc(db, 'products', existingProduct.id) : doc(collection(db, 'products')); 
+          const chunks = [];
+          for (let i = 0; i < results.data.length; i += 400) {
+            chunks.push(results.data.slice(i, i + 400));
+          }
+
+          for (const chunk of chunks) {
+            const batch = writeBatch(db);
             
-            const imageArray = row.imageUrl || row.image ? [DOMPurify.sanitize(row.imageUrl || row.image)] : [];
-            const tagsArray = row.tags ? row.tags.split(',').map(t => DOMPurify.sanitize(t.trim())).filter(t => t) : [];
-            const rawCarton = row.Carton_Size || row.cartonSize || row.carton;
+            chunk.forEach((row) => {
+              const rowName = row.Name || row.name || row.Title || row.title;
+              if (!rowName) return; 
 
-            batch.set(docRef, {
-              name: safeTitle,
-              retail: Number(row.retail) || 0,
-              ws: Number(row.ws || row.wholesalePrice) || 0,
-              bulk: Number(row.bulk || row.bulkPrice) || 0,
-              retailMoq: Number(row.retailMoq || row.moq) || 1,
-              wsMoq: Number(row.wsMoq || row.moq) || 1,
-              bulkMoq: Number(row.bulkMoq || row.moq) || 1,
-              packSize: Number(row.packSize) || 1,
-              cartonSize: rawCarton ? Number(rawCarton) : null,
-              stock: Number(row.stock) || 0, 
-              desc: DOMPurify.sanitize(row.desc || row.description || ""),
-              category: DOMPurify.sanitize(row.category || row.cat || ""), 
-              tags: tagsArray, 
-              images: imageArray, 
-            }, { merge: true }); 
-            count++;
-          });
+              const safeTitle = DOMPurify.sanitize(rowName);
+              const existingProduct = products.find(p => (p.name || p.title || "").toLowerCase() === safeTitle.toLowerCase());
+              const docRef = existingProduct ? doc(db, 'products', existingProduct.id) : doc(collection(db, 'products')); 
+              
+              const rawImages = row.Images || row.images || row.imageUrl || row.image;
+              const imageArray = rawImages ? String(rawImages).split(',').map(i => DOMPurify.sanitize(i.trim())).filter(i => i) : [];
+              
+              const rawTags = row.Tags || row.tags;
+              const tagsArray = rawTags ? String(rawTags).split(',').map(t => DOMPurify.sanitize(t.trim())).filter(t => t) : [];
+              
+              const rawCarton = row.Carton_Size || row.cartonSize || row.carton;
 
-          await batch.commit(); 
+              batch.set(docRef, {
+                name: safeTitle,
+                retail: Number(row.Retail_Price || row.retail) || 0,
+                ws: Number(row.WS_Price || row.ws || row.wholesalePrice) || 0,
+                bulk: Number(row.Bulk_Price || row.bulk || row.bulkPrice) || 0,
+                retailMoq: Number(row.Retail_MOQ || row.retailMoq || row.moq) || 1,
+                wsMoq: Number(row.WS_MOQ || row.wsMoq || row.moq) || 1,
+                bulkMoq: Number(row.Bulk_MOQ || row.bulkMoq || row.moq) || 1,
+                packSize: Number(row.Pack_Size || row.packSize) || 1,
+                cartonSize: rawCarton ? Number(rawCarton) : null,
+                stock: Number(row.Stock || row.stock) || 0, 
+                desc: DOMPurify.sanitize(row.Description || row.desc || row.description || ""),
+                category: DOMPurify.sanitize(row.Category || row.category || row.cat || ""), 
+                tags: tagsArray, 
+                images: imageArray, 
+              }, { merge: true }); 
+              count++;
+            });
+
+            await batch.commit(); 
+          }
+
           alert(`✅ Successfully processed ${count} products!`);
           fetchData();
         } catch (error) {
           console.error("Bulk Import Error:", error);
-          alert('❌ Failed to process CSV.');
+          alert(`❌ Failed to process CSV: ${error.message}`);
         } finally {
           setIsProcessing(false);
+          event.target.value = null; 
         }
       }
     });
@@ -846,10 +870,29 @@ const AdminDashboard = () => {
                       ))}
                     </div>
                     
-                    <label className="w-full py-3 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:bg-gray-100 transition">
-                      <span className="text-sm font-semibold text-gray-500">{isProcessing ? 'Uploading...' : '+ Add Photos'}</span>
-                      <input type="file" accept="image/*" multiple className="hidden" onChange={handleImageUpload} disabled={isProcessing} />
-                    </label>
+                    {/* ✨ MODIFIED: Now uses the react-dropzone instead of standard input */}
+                    <div 
+                      {...getRootProps()} 
+                      className={`w-full py-6 border-2 border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer transition-colors duration-200
+                        ${isDragActive ? 'border-[#D4AF37] bg-[#F9F8F6]' : 'border-gray-300 bg-white hover:bg-gray-50'}
+                        ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}
+                      `}
+                    >
+                      <input {...getInputProps()} disabled={isProcessing} />
+                      {isProcessing ? (
+                        <span className="text-sm font-semibold text-gray-500 text-center">
+                          Uploading & Optimizing...<br/>
+                          <span className="text-xs font-normal text-gray-400">Please wait</span>
+                        </span>
+                      ) : isDragActive ? (
+                        <span className="text-sm font-bold text-[#D4AF37]">Drop the photos here...</span>
+                      ) : (
+                        <span className="text-sm font-semibold text-gray-500 text-center">
+                          + Drag & Drop Photos Here<br/>
+                          <span className="text-xs font-normal text-gray-400">or click to browse (HEIC/JPG/PNG)</span>
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div>
@@ -1095,7 +1138,6 @@ const AdminDashboard = () => {
                     </div>
                   )}
 
-                  {/* ✨ FIXED: Removed 'required' attribute so you can save with just a phone number */}
                   <div>
                     <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Email Address <span className="text-gray-400 font-normal lowercase">(Optional if phone is provided)</span></label>
                     <input 
@@ -1118,7 +1160,6 @@ const AdminDashboard = () => {
                     />
                   </div>
 
-                  {/* ✨ FIXED: Allowed phone as primary contact method */}
                   <div>
                     <label className="block text-xs font-bold text-gray-700 uppercase mb-1">Phone Number <span className="text-gray-400 font-normal lowercase">(Optional if email is provided)</span></label>
                     <input 
