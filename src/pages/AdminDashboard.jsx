@@ -7,8 +7,9 @@ import { useNavigate } from 'react-router-dom';
 import Papa from 'papaparse'; 
 import DOMPurify from 'dompurify';
 import heic2any from 'heic2any'; 
-// ✨ ADDED: Import the useDropzone hook
 import { useDropzone } from 'react-dropzone';
+// ✨ ADDED: Import localforage for offline caching
+import localforage from 'localforage';
 
 const AdminDashboard = () => {
   const { logout } = useAuth();
@@ -43,6 +44,71 @@ const AdminDashboard = () => {
     fetchData(); 
     fetchSettings();
   }, []);
+
+  // --- ✨ ADDED: OFFLINE SYNC AGENT ---
+  useEffect(() => {
+    const handleOnline = async () => {
+      console.log("Network restored. Processing offline image queue...");
+      try {
+        const keys = await localforage.keys();
+        const offlineKeys = keys.filter(k => k.startsWith('offline_img_'));
+        
+        if (offlineKeys.length === 0) {
+            console.log("No offline images to process.");
+            return;
+        }
+
+        for (const key of offlineKeys) {
+          const { file, localUrl, path } = await localforage.getItem(key);
+          console.log(`Uploading delayed image to: ${path}`);
+          
+          // 1. Upload to Firebase Storage
+          const storageRef = ref(storage, path);
+          const uploadTask = await uploadBytesResumable(storageRef, file);
+          const permanentUrl = await getDownloadURL(uploadTask.ref);
+
+          // 2. Auto-Link: Find any product that saved this local blob URL and update it
+          const prodSnap = await getDocs(collection(db, 'products'));
+          prodSnap.forEach(async (docSnap) => {
+              const data = docSnap.data();
+              
+              // Check main images
+              if (data.images && data.images.includes(localUrl)) {
+                  const cleanImages = data.images.map(url => url === localUrl ? permanentUrl : url);
+                  await updateDoc(doc(db, 'products', docSnap.id), { images: cleanImages });
+              }
+              
+              // Check variant images
+              if (data.variants) {
+                  let changed = false;
+                  const updatedVariants = data.variants.map(v => {
+                      if (v.image === localUrl) {
+                          changed = true;
+                          return { ...v, image: permanentUrl };
+                      }
+                      return v;
+                  });
+                  if (changed) {
+                      await updateDoc(doc(db, 'products', docSnap.id), { variants: updatedVariants });
+                  }
+              }
+          });
+
+          // 3. Remove from local queue
+          await localforage.removeItem(key);
+        }
+        
+        console.log("Offline queue processed and auto-linked successfully!");
+        fetchData(); // Refresh UI to show permanent URLs
+      } catch (error) {
+        console.error("Error processing offline queue:", error);
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }, []);
+  // ------------------------------------
 
   const fetchSettings = async () => {
     try {
@@ -204,9 +270,10 @@ const AdminDashboard = () => {
     }
   };
 
-  const handleSaveProduct = async (e) => {
+ const handleSaveProduct = async (e) => {
     e.preventDefault();
     setIsProcessing(true);
+    
     try {
       const validVariants = (selectedItem.variants || []).filter(v => v.name && v.name.trim() !== '');
       const tagsArray = selectedItem.tagsInput ? selectedItem.tagsInput.split(',').map(t => DOMPurify.sanitize(t.trim())).filter(t => t) : (selectedItem.tags || []);
@@ -237,13 +304,30 @@ const AdminDashboard = () => {
         updatedAt: serverTimestamp()
       };
 
+      // ✨ THE FIX: Network-Aware Database Writes
       if (selectedItem.id) {
-        await updateDoc(doc(db, 'products', selectedItem.id), productData);
+        const docRef = doc(db, 'products', selectedItem.id);
+        if (navigator.onLine) {
+           await updateDoc(docRef, productData); // Wait for server if online
+        } else {
+           updateDoc(docRef, productData); // Fire & Forget into local cache if offline
+        }
       } else {
-        await addDoc(collection(db, 'products'), { ...productData, createdAt: serverTimestamp() });
+        const colRef = collection(db, 'products');
+        if (navigator.onLine) {
+           await addDoc(colRef, { ...productData, createdAt: serverTimestamp() });
+        } else {
+           addDoc(colRef, { ...productData, createdAt: serverTimestamp() }); 
+        }
       }
       
-      await fetchData();
+      // ✨ THE FIX: Network-Aware UI Refresh
+      if (navigator.onLine) {
+          await fetchData();
+      } else {
+          fetchData(); // Don't freeze the UI waiting for offline cache reads
+      }
+
       closeDrawer();
     } catch (err) {
       alert('Error saving product');
@@ -301,7 +385,7 @@ const AdminDashboard = () => {
     });
   };
 
-  // ✨ MODIFIED: Now accepts an array of files directly from react-dropzone
+  // ✨ MODIFIED: Network detection and LocalForage cache integrated
   const handleImageUpload = async (files) => {
     if (!files || !files.length) return;
     setIsProcessing(true);
@@ -309,9 +393,25 @@ const AdminDashboard = () => {
       const newImageUrls = [];
       for (const originalFile of files) {
         const webpFile = await convertToWebP(originalFile);
-        const storageRef = ref(storage, `product-images/${Date.now()}-${webpFile.name}`);
-        const uploadTask = await uploadBytesResumable(storageRef, webpFile);
-        newImageUrls.push(await getDownloadURL(uploadTask.ref));
+        
+        if (!navigator.onLine) {
+          // OFFLINE MODE: Save to localforage and generate temporary URL
+          const localUrl = URL.createObjectURL(webpFile);
+          const fileKey = `offline_img_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+          
+          await localforage.setItem(fileKey, {
+            file: webpFile,
+            localUrl: localUrl,
+            path: `product-images/offline-${Date.now()}-${webpFile.name}`
+          });
+          
+          newImageUrls.push(localUrl);
+        } else {
+          // ONLINE MODE: Direct upload to Firebase Storage
+          const storageRef = ref(storage, `product-images/${Date.now()}-${webpFile.name}`);
+          const uploadTask = await uploadBytesResumable(storageRef, webpFile);
+          newImageUrls.push(await getDownloadURL(uploadTask.ref));
+        }
       }
       setSelectedItem(prev => ({ 
         ...prev, 
@@ -324,7 +424,6 @@ const AdminDashboard = () => {
     }
   };
 
-  // ✨ ADDED: Configuration for the react-dropzone hook
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: handleImageUpload,
     accept: {
@@ -335,18 +434,33 @@ const AdminDashboard = () => {
     disabled: isProcessing
   });
 
+  // ✨ MODIFIED: Network detection and LocalForage cache for Variants
   const handleVariantImageUpload = async (index, event) => {
     const file = event.target.files[0];
     if (!file) return;
     setIsProcessing(true);
     try {
       const webpFile = await convertToWebP(file);
-      const storageRef = ref(storage, `product-images/${Date.now()}-var-${webpFile.name}`);
-      const uploadTask = await uploadBytesResumable(storageRef, webpFile);
-      const url = await getDownloadURL(uploadTask.ref);
+      let finalUrl = '';
+
+      if (!navigator.onLine) {
+        // OFFLINE MODE
+        finalUrl = URL.createObjectURL(webpFile);
+        const fileKey = `offline_img_var_${Date.now()}`;
+        await localforage.setItem(fileKey, {
+          file: webpFile,
+          localUrl: finalUrl,
+          path: `product-images/offline-var-${Date.now()}-${webpFile.name}`
+        });
+      } else {
+        // ONLINE MODE
+        const storageRef = ref(storage, `product-images/${Date.now()}-var-${webpFile.name}`);
+        const uploadTask = await uploadBytesResumable(storageRef, webpFile);
+        finalUrl = await getDownloadURL(uploadTask.ref);
+      }
 
       const newVariants = [...(selectedItem.variants || [])];
-      newVariants[index].image = url; 
+      newVariants[index].image = finalUrl; 
       setSelectedItem(prev => ({ ...prev, variants: newVariants }));
     } catch (error) {
       alert('Variant image upload failed.');
@@ -870,7 +984,6 @@ const AdminDashboard = () => {
                       ))}
                     </div>
                     
-                    {/* ✨ MODIFIED: Now uses the react-dropzone instead of standard input */}
                     <div 
                       {...getRootProps()} 
                       className={`w-full py-6 border-2 border-dashed rounded-lg flex flex-col items-center justify-center cursor-pointer transition-colors duration-200
