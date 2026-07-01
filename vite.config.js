@@ -28,10 +28,27 @@ export default defineConfig({
           }
         ]
       },
-      // ✨ THE FIX: Force the PWA plugin to generate the manifest during local dev
+
+      workbox: {
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+      },
+      
       devOptions: {
         enabled: true
       }
     })
   ],
+  // ✨ THE FIX: Explicitly handle the build warnings that were causing Exit Code 1
+  build: {
+    chunkSizeWarningLimit: 1000, 
+    rollupOptions: {
+      onwarn(warning, warn) {
+        // Suppress the PWA plugin bundle variable warning
+        if (warning.code === 'THIS_IS_UNDEFINED' || warning.message.includes('plugin assigns to bundle variable')) {
+          return;
+        }
+        warn(warning);
+      }
+    }
+  }
 });
