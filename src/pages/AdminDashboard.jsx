@@ -8,7 +8,6 @@ import Papa from 'papaparse';
 import DOMPurify from 'dompurify';
 import heic2any from 'heic2any'; 
 import { useDropzone } from 'react-dropzone';
-// ✨ ADDED: Import localforage for offline caching
 import localforage from 'localforage';
 
 const AdminDashboard = () => {
@@ -27,6 +26,10 @@ const AdminDashboard = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('newest');
 
+  // --- Filter & Drag States ---
+  const [showMissingImagesOnly, setShowMissingImagesOnly] = useState(false);
+  const [dragOverCardId, setDragOverCardId] = useState(null);
+
   // --- CUSTOMER TAB STATES ---
   const [customerViewMode, setCustomerViewMode] = useState('grid');
   const [customerSearchQuery, setCustomerSearchQuery] = useState('');
@@ -40,12 +43,15 @@ const AdminDashboard = () => {
   const [drawerType, setDrawerType] = useState(null); 
   const [selectedItem, setSelectedItem] = useState(null); 
 
+  // ✨ NEW: Side-by-Side Expanded Image State
+  const [expandedImage, setExpandedImage] = useState(null);
+
   useEffect(() => { 
     fetchData(); 
     fetchSettings();
   }, []);
 
-  // --- ✨ ADDED: OFFLINE SYNC AGENT ---
+  // --- OFFLINE SYNC AGENT ---
   useEffect(() => {
     const handleOnline = async () => {
       console.log("Network restored. Processing offline image queue...");
@@ -62,23 +68,19 @@ const AdminDashboard = () => {
           const { file, localUrl, path } = await localforage.getItem(key);
           console.log(`Uploading delayed image to: ${path}`);
           
-          // 1. Upload to Firebase Storage
           const storageRef = ref(storage, path);
           const uploadTask = await uploadBytesResumable(storageRef, file);
           const permanentUrl = await getDownloadURL(uploadTask.ref);
 
-          // 2. Auto-Link: Find any product that saved this local blob URL and update it
           const prodSnap = await getDocs(collection(db, 'products'));
           prodSnap.forEach(async (docSnap) => {
               const data = docSnap.data();
               
-              // Check main images
               if (data.images && data.images.includes(localUrl)) {
                   const cleanImages = data.images.map(url => url === localUrl ? permanentUrl : url);
                   await updateDoc(doc(db, 'products', docSnap.id), { images: cleanImages });
               }
               
-              // Check variant images
               if (data.variants) {
                   let changed = false;
                   const updatedVariants = data.variants.map(v => {
@@ -94,12 +96,11 @@ const AdminDashboard = () => {
               }
           });
 
-          // 3. Remove from local queue
           await localforage.removeItem(key);
         }
         
         console.log("Offline queue processed and auto-linked successfully!");
-        fetchData(); // Refresh UI to show permanent URLs
+        fetchData(); 
       } catch (error) {
         console.error("Error processing offline queue:", error);
       }
@@ -108,7 +109,6 @@ const AdminDashboard = () => {
     window.addEventListener('online', handleOnline);
     return () => window.removeEventListener('online', handleOnline);
   }, []);
-  // ------------------------------------
 
   const fetchSettings = async () => {
     try {
@@ -171,6 +171,7 @@ const AdminDashboard = () => {
     setTimeout(() => {
       setDrawerType(null);
       setSelectedItem(null);
+      setExpandedImage(null); // ✨ Reset expanded image on drawer close
     }, 300);
   };
 
@@ -205,13 +206,11 @@ const AdminDashboard = () => {
   };
 
   const handleSaveCustomer = async (e) => {
-    e.preventDefault();
-
+    if (e) e.preventDefault();
     if (!selectedItem.email && !selectedItem.phone) {
       alert("Please provide either an Email Address or a Phone Number.");
       return;
     }
-
     setIsProcessing(true);
     try {
       const safeEmail = selectedItem.email ? selectedItem.email.trim().toLowerCase() : '';
@@ -270,8 +269,8 @@ const AdminDashboard = () => {
     }
   };
 
- const handleSaveProduct = async (e) => {
-    e.preventDefault();
+  const handleSaveProduct = async (e) => {
+    if (e) e.preventDefault();
     setIsProcessing(true);
     
     try {
@@ -304,13 +303,12 @@ const AdminDashboard = () => {
         updatedAt: serverTimestamp()
       };
 
-      // ✨ THE FIX: Network-Aware Database Writes
       if (selectedItem.id) {
         const docRef = doc(db, 'products', selectedItem.id);
         if (navigator.onLine) {
-           await updateDoc(docRef, productData); // Wait for server if online
+           await updateDoc(docRef, productData); 
         } else {
-           updateDoc(docRef, productData); // Fire & Forget into local cache if offline
+           updateDoc(docRef, productData); 
         }
       } else {
         const colRef = collection(db, 'products');
@@ -321,11 +319,10 @@ const AdminDashboard = () => {
         }
       }
       
-      // ✨ THE FIX: Network-Aware UI Refresh
       if (navigator.onLine) {
           await fetchData();
       } else {
-          fetchData(); // Don't freeze the UI waiting for offline cache reads
+          fetchData(); 
       }
 
       closeDrawer();
@@ -385,34 +382,65 @@ const AdminDashboard = () => {
     });
   };
 
-  // ✨ MODIFIED: Network detection and LocalForage cache integrated
+  // Image Processing Logic for reusability
+  const processFilesAndGetUrls = async (files) => {
+    const newImageUrls = [];
+    for (const originalFile of files) {
+      const webpFile = await convertToWebP(originalFile);
+      
+      if (!navigator.onLine) {
+        const localUrl = URL.createObjectURL(webpFile);
+        const fileKey = `offline_img_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+        
+        await localforage.setItem(fileKey, {
+          file: webpFile,
+          localUrl: localUrl,
+          path: `product-images/offline-${Date.now()}-${webpFile.name}`
+        });
+        newImageUrls.push(localUrl);
+      } else {
+        const storageRef = ref(storage, `product-images/${Date.now()}-${webpFile.name}`);
+        const uploadTask = await uploadBytesResumable(storageRef, webpFile);
+        newImageUrls.push(await getDownloadURL(uploadTask.ref));
+      }
+    }
+    return newImageUrls;
+  };
+
+  // Handle drops inside the opened drawer
   const handleImageUpload = async (files) => {
     if (!files || !files.length) return;
     setIsProcessing(true);
     try {
-      const newImageUrls = [];
-      for (const originalFile of files) {
-        const webpFile = await convertToWebP(originalFile);
-        
-        if (!navigator.onLine) {
-          // OFFLINE MODE: Save to localforage and generate temporary URL
-          const localUrl = URL.createObjectURL(webpFile);
-          const fileKey = `offline_img_${Date.now()}_${Math.random().toString(36).substring(7)}`;
-          
-          await localforage.setItem(fileKey, {
-            file: webpFile,
-            localUrl: localUrl,
-            path: `product-images/offline-${Date.now()}-${webpFile.name}`
-          });
-          
-          newImageUrls.push(localUrl);
-        } else {
-          // ONLINE MODE: Direct upload to Firebase Storage
-          const storageRef = ref(storage, `product-images/${Date.now()}-${webpFile.name}`);
-          const uploadTask = await uploadBytesResumable(storageRef, webpFile);
-          newImageUrls.push(await getDownloadURL(uploadTask.ref));
-        }
-      }
+      const newImageUrls = await processFilesAndGetUrls(files);
+      if (newImageUrls.length > 0) setExpandedImage(newImageUrls[0]); // ✨ Auto-expand uploaded image
+      setSelectedItem(prev => ({ 
+        ...prev, 
+        images: [...(prev.images || []), ...newImageUrls] 
+      }));
+    } catch (error) {
+      alert(error.message || 'Upload failed.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Handles dragging an image directly onto a Product Card in the grid/list
+  const handleProductCardDrop = async (e, product) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverCardId(null);
+
+    const files = Array.from(e.dataTransfer.files).filter(file => file.type.startsWith('image/') || file.name.toLowerCase().endsWith('.heic'));
+    if (!files.length) return;
+
+    openDrawer('product', product);
+    setIsProcessing(true);
+
+    try {
+      const newImageUrls = await processFilesAndGetUrls(files);
+      if (newImageUrls.length > 0) setExpandedImage(newImageUrls[0]); // ✨ Auto-expand the dropped image
+      
       setSelectedItem(prev => ({ 
         ...prev, 
         images: [...(prev.images || []), ...newImageUrls] 
@@ -434,7 +462,6 @@ const AdminDashboard = () => {
     disabled: isProcessing
   });
 
-  // ✨ MODIFIED: Network detection and LocalForage cache for Variants
   const handleVariantImageUpload = async (index, event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -444,7 +471,6 @@ const AdminDashboard = () => {
       let finalUrl = '';
 
       if (!navigator.onLine) {
-        // OFFLINE MODE
         finalUrl = URL.createObjectURL(webpFile);
         const fileKey = `offline_img_var_${Date.now()}`;
         await localforage.setItem(fileKey, {
@@ -453,7 +479,6 @@ const AdminDashboard = () => {
           path: `product-images/offline-var-${Date.now()}-${webpFile.name}`
         });
       } else {
-        // ONLINE MODE
         const storageRef = ref(storage, `product-images/${Date.now()}-var-${webpFile.name}`);
         const uploadTask = await uploadBytesResumable(storageRef, webpFile);
         finalUrl = await getDownloadURL(uploadTask.ref);
@@ -462,6 +487,7 @@ const AdminDashboard = () => {
       const newVariants = [...(selectedItem.variants || [])];
       newVariants[index].image = finalUrl; 
       setSelectedItem(prev => ({ ...prev, variants: newVariants }));
+      setExpandedImage(finalUrl); // ✨ Auto-expand variant image too
     } catch (error) {
       alert('Variant image upload failed.');
     } finally {
@@ -470,10 +496,14 @@ const AdminDashboard = () => {
   };
 
   const handleRemoveImage = (indexToRemove) => {
-    setSelectedItem(prev => ({
-      ...prev,
-      images: prev.images.filter((_, index) => index !== indexToRemove)
-    }));
+    setSelectedItem(prev => {
+      const imageToRemove = prev.images[indexToRemove];
+      if (expandedImage === imageToRemove) setExpandedImage(null); // Close preview if deleted
+      return {
+        ...prev,
+        images: prev.images.filter((_, index) => index !== indexToRemove)
+      };
+    });
   };
 
   const handleAddVariant = () => {
@@ -507,7 +537,6 @@ const AdminDashboard = () => {
       complete: async (results) => {
         try {
           let count = 0;
-          
           const chunks = [];
           for (let i = 0; i < results.data.length; i += 400) {
             chunks.push(results.data.slice(i, i + 400));
@@ -515,7 +544,6 @@ const AdminDashboard = () => {
 
           for (const chunk of chunks) {
             const batch = writeBatch(db);
-            
             chunk.forEach((row) => {
               const rowName = row.Name || row.name || row.Title || row.title;
               if (!rowName) return; 
@@ -550,7 +578,6 @@ const AdminDashboard = () => {
               }, { merge: true }); 
               count++;
             });
-
             await batch.commit(); 
           }
 
@@ -600,6 +627,7 @@ const AdminDashboard = () => {
 
   const filteredProducts = useMemo(() => {
     return products.filter(p => {
+      if (showMissingImagesOnly && p.images && p.images.length > 0) return false;
       const q = searchQuery.toLowerCase();
       return (p.name || '').toLowerCase().includes(q) || 
              (p.category || p.cat || '').toLowerCase().includes(q) ||
@@ -610,7 +638,7 @@ const AdminDashboard = () => {
       if (sortBy === 'nameAsc') return (a.name || '').localeCompare(b.name || '');
       return 0; 
     });
-  }, [products, searchQuery, sortBy]);
+  }, [products, searchQuery, sortBy, showMissingImagesOnly]);
 
   const filteredActiveCustomers = useMemo(() => {
     return customers
@@ -627,7 +655,6 @@ const AdminDashboard = () => {
          return (b.createdAt?.toMillis ? b.createdAt.toMillis() : 0) - (a.createdAt?.toMillis ? a.createdAt.toMillis() : 0);
       });
   }, [customers, customerSearchQuery, customerSortBy]);
-
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 relative bg-[#F9F8F6] min-h-screen">
@@ -683,6 +710,16 @@ const AdminDashboard = () => {
             </div>
             
             <div className="flex w-full md:w-auto gap-2">
+              <label className="flex items-center gap-2 bg-white border border-gray-300 px-3 py-2 rounded-md text-sm font-semibold text-gray-700 cursor-pointer hover:bg-gray-50 transition shadow-sm">
+                <input 
+                  type="checkbox" 
+                  checked={showMissingImagesOnly} 
+                  onChange={(e) => setShowMissingImagesOnly(e.target.checked)} 
+                  className="accent-[#D4AF37] w-4 h-4"
+                />
+                Missing Images Only
+              </label>
+
               <button onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md text-sm font-semibold hover:bg-gray-200 hidden md:block transition-colors">
                 {viewMode === 'grid' ? '☰ List' : '⊞ Grid'}
               </button>
@@ -701,11 +738,22 @@ const AdminDashboard = () => {
 
           <div className={viewMode === 'grid' ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" : "flex flex-col gap-2"}>
             {filteredProducts.map(product => (
-              <div key={product.id} onClick={() => openDrawer('product', product)} className={`bg-white rounded-xl border border-gray-100 shadow-sm hover:border-[#D4AF37] transition flex cursor-pointer ${viewMode === 'grid' ? 'flex-col p-4' : 'flex-row justify-between items-center p-3'} ${product.stock <= 0 ? 'opacity-60' : ''}`}>
-                <div className="flex items-center gap-4 flex-1">
+              <div 
+                key={product.id} 
+                onClick={() => openDrawer('product', product)} 
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverCardId(product.id); }}
+                onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setDragOverCardId(null); }}
+                onDrop={(e) => handleProductCardDrop(e, product)}
+                className={`bg-white rounded-xl border-2 shadow-sm transition flex cursor-pointer 
+                  ${dragOverCardId === product.id ? 'border-[#D4AF37] bg-yellow-50 scale-[1.02] shadow-md z-10' : 'border-transparent border-gray-100 hover:border-[#D4AF37]'} 
+                  ${viewMode === 'grid' ? 'flex-col p-4' : 'flex-row justify-between items-center p-3'} 
+                  ${product.stock <= 0 ? 'opacity-60' : ''}`
+                }
+              >
+                <div className="flex items-center gap-4 flex-1 pointer-events-none">
                   {viewMode === 'list' && (
                     <div className="w-12 h-12 bg-gray-100 rounded-md overflow-hidden flex-shrink-0 relative">
-                      {product.images && product.images.length > 0 ? <img src={product.images[0]} alt={product.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-gray-400 text-xs">No Img</div>}
+                      {product.images && product.images.length > 0 ? <img src={product.images[0]} alt={product.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-gray-400 text-xs text-center leading-tight">Drop<br/>Here</div>}
                     </div>
                   )}
                   <div>
@@ -720,7 +768,7 @@ const AdminDashboard = () => {
                     </div>
                   </div>
                 </div>
-                <div className={`${viewMode === 'grid' ? 'mt-4 border-t border-gray-100 pt-3' : ''} flex justify-between items-center gap-2`}>
+                <div className={`${viewMode === 'grid' ? 'mt-4 border-t border-gray-100 pt-3' : ''} flex justify-between items-center gap-2 pointer-events-none`}>
                   {viewMode === 'grid' && (
                      <div className="flex flex-col">
                        <span className="text-xs text-gray-500">Retail: ₹{product.retail}</span>
@@ -728,10 +776,19 @@ const AdminDashboard = () => {
                        <span className="text-xs font-semibold text-gray-700">Stock: {product.stock || 0}</span>
                      </div>
                   )}
-                  <span className="text-xs bg-gray-100 text-gray-700 px-3 py-1.5 rounded-md font-semibold">Edit</span>
+                  <span className={`text-xs px-3 py-1.5 rounded-md font-semibold ${dragOverCardId === product.id ? 'bg-[#D4AF37] text-white' : 'bg-gray-100 text-gray-700'}`}>
+                    {dragOverCardId === product.id ? 'Drop Image!' : 'Edit'}
+                  </span>
                 </div>
               </div>
             ))}
+            
+            {filteredProducts.length === 0 && (
+                <div className="col-span-full text-center p-12 text-gray-500">
+                    <p className="text-lg font-bold">🎉 Inbox Zero!</p>
+                    <p className="text-sm">No products found matching your current filters.</p>
+                </div>
+            )}
           </div>
         </div>
       )}
@@ -949,9 +1006,25 @@ const AdminDashboard = () => {
       {/* --- 🚀 THE SLIDE-OVER DRAWER --- */}
       {isDrawerOpen && (
         <div className="fixed inset-0 z-50 flex justify-end">
-          <div className="absolute inset-0 bg-black bg-opacity-30 backdrop-blur-sm transition-opacity" onClick={closeDrawer}></div>
+          <div className="absolute inset-0 bg-black bg-opacity-40 backdrop-blur-sm transition-opacity" onClick={closeDrawer}></div>
           
-          <div className="relative w-full max-w-md bg-white h-full shadow-2xl flex flex-col">
+          {/* ✨ NEW: Side-by-Side Expanded Reference Image */}
+          {expandedImage && (
+            <div className="absolute inset-y-0 left-0 right-0 md:right-[28rem] p-4 lg:p-8 hidden md:flex items-center justify-center z-40 pointer-events-none">
+                <div className="relative w-full h-full flex items-center justify-center pointer-events-auto bg-black bg-opacity-10 rounded-2xl p-2 shadow-inner">
+                  <img src={expandedImage} alt="Expanded Preview" className="max-w-full max-h-full object-contain rounded-xl drop-shadow-2xl" />
+                  <button 
+                    type="button"
+                    onClick={() => setExpandedImage(null)} 
+                    className="absolute top-4 right-4 bg-black bg-opacity-60 hover:bg-opacity-100 text-white rounded-full w-10 h-10 flex items-center justify-center text-xl transition-all shadow-md backdrop-blur-md"
+                  >
+                    &times;
+                  </button>
+                </div>
+            </div>
+          )}
+
+          <div className="relative w-full max-w-md bg-white h-full shadow-2xl flex flex-col z-50">
             
             <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-[#F9F8F6]">
               <h3 className="text-xl font-bold text-gray-900 uppercase tracking-wide">
@@ -964,17 +1037,44 @@ const AdminDashboard = () => {
               
               {/* --- PRODUCT FORM --- */}
               {drawerType === 'product' && (
-                <form id="drawerForm" onSubmit={handleSaveProduct} className="space-y-5">
+                <form 
+                  id="drawerForm" 
+                  onSubmit={handleSaveProduct} 
+                  className="space-y-5"
+                  onKeyDown={(e) => {
+                    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                        e.preventDefault();
+                        if (e.currentTarget.checkValidity()) {
+                            handleSaveProduct(e);
+                        } else {
+                            e.currentTarget.reportValidity();
+                        }
+                    }
+                  }}
+                >
                   
                   <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
                     <div className="flex flex-wrap gap-3 mb-3">
                       {selectedItem?.images?.map((img, idx) => (
-                        <div key={idx} className="relative w-20 h-20 rounded-md overflow-hidden border border-gray-300 shadow-sm">
-                          <img src={img} alt={`Product ${idx}`} className="w-full h-full object-cover" />
+                        <div key={idx} className="relative w-20 h-20 rounded-md overflow-hidden border border-gray-300 shadow-sm group">
+                          {img.startsWith('blob:') && (
+                            <div className="absolute inset-0 bg-white bg-opacity-70 flex items-center justify-center z-10 backdrop-blur-[1px]">
+                              <span className="text-[9px] font-bold text-gray-700 bg-white px-1 py-0.5 rounded border border-gray-300 shadow">
+                                PENDING SYNC
+                              </span>
+                            </div>
+                          )}
+                          {/* ✨ MODIFIED: Click thumbnail to expand image */}
+                          <img 
+                            src={img} 
+                            alt={`Product ${idx}`} 
+                            onClick={() => setExpandedImage(img)}
+                            className={`w-full h-full object-cover transition-opacity cursor-pointer ${expandedImage === img ? 'opacity-50 ring-2 ring-[#D4AF37]' : 'hover:opacity-80'}`} 
+                          />
                           <button 
                             type="button" 
                             onClick={() => handleRemoveImage(idx)} 
-                            className="absolute top-0.5 right-0.5 bg-white rounded-full p-0.5 shadow hover:text-red-500 text-gray-600"
+                            className="absolute top-0.5 right-0.5 bg-white rounded-full p-0.5 shadow hover:text-red-500 text-gray-600 z-20"
                           >
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path>
@@ -1179,7 +1279,7 @@ const AdminDashboard = () => {
                               <div className="flex gap-2 items-center">
                                 <label className="relative w-10 h-10 bg-gray-100 border border-dashed border-gray-400 rounded overflow-hidden flex-shrink-0 cursor-pointer hover:border-[#D4AF37] flex items-center justify-center transition-colors">
                                   {variant.image ? (
-                                    <img src={variant.image} alt="Var" className="w-full h-full object-cover" />
+                                    <img src={variant.image} alt="Var" className="w-full h-full object-cover" onClick={(e) => { e.preventDefault(); setExpandedImage(variant.image); }} />
                                   ) : (
                                     <span className="text-gray-400 text-[9px] text-center leading-none font-bold uppercase tracking-wider">+<br/>Img</span>
                                   )}
@@ -1323,9 +1423,12 @@ const AdminDashboard = () => {
                 type="submit" 
                 form="drawerForm" 
                 disabled={isProcessing} 
-                className="w-full bg-[#111111] text-white py-3.5 rounded-md font-bold hover:bg-black transition shadow-md disabled:opacity-50 uppercase tracking-wide"
+                className="w-full bg-[#111111] text-white py-3.5 rounded-md font-bold hover:bg-black transition shadow-md disabled:opacity-50 uppercase tracking-wide flex items-center justify-center gap-2"
               >
                 {isProcessing ? 'Saving...' : `Save ${drawerType}`}
+                {drawerType === 'product' && !isProcessing && (
+                  <span className="text-[10px] text-gray-400 font-normal ml-2 tracking-normal bg-[#222222] px-2 py-0.5 rounded border border-gray-700">Cmd + Enter</span>
+                )}
               </button>
               
               {selectedItem?.id && (

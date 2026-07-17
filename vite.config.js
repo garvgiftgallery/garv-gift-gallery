@@ -28,17 +28,14 @@ export default defineConfig({
           }
         ]
       },
-
       workbox: {
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
       },
-      
       devOptions: {
         enabled: true
       }
     })
   ],
-  // ✨ THE FIX: Explicitly handle the build warnings that were causing Exit Code 1
   build: {
     chunkSizeWarningLimit: 1000, 
     rollupOptions: {
@@ -48,6 +45,27 @@ export default defineConfig({
           return;
         }
         warn(warning);
+      },
+      // ✨ ADDED: Code-Splitting logic to break up the 2.3MB chunk
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            // Isolate the massive HEIC decoder into its own file
+            if (id.includes('heic2any')) {
+              return 'heic2any-vendor';
+            }
+            // Group all Firebase libraries together
+            if (id.includes('firebase')) {
+              return 'firebase-vendor';
+            }
+            // Group React core libraries together
+            if (id.includes('react') || id.includes('react-dom') || id.includes('react-router-dom')) {
+              return 'react-vendor';
+            }
+            // Dump everything else (PapaParse, localforage, etc.) into a general dependencies chunk
+            return 'general-vendor';
+          }
+        }
       }
     }
   }
