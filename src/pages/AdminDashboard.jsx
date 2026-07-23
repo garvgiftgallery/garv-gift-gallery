@@ -43,7 +43,7 @@ const AdminDashboard = () => {
   const [drawerType, setDrawerType] = useState(null); 
   const [selectedItem, setSelectedItem] = useState(null); 
 
-  // ✨ NEW: Side-by-Side Expanded Image State
+  // --- Side-by-Side Expanded Image State ---
   const [expandedImage, setExpandedImage] = useState(null);
 
   useEffect(() => { 
@@ -171,7 +171,7 @@ const AdminDashboard = () => {
     setTimeout(() => {
       setDrawerType(null);
       setSelectedItem(null);
-      setExpandedImage(null); // ✨ Reset expanded image on drawer close
+      setExpandedImage(null); 
     }, 300);
   };
 
@@ -382,7 +382,6 @@ const AdminDashboard = () => {
     });
   };
 
-  // Image Processing Logic for reusability
   const processFilesAndGetUrls = async (files) => {
     const newImageUrls = [];
     for (const originalFile of files) {
@@ -407,13 +406,12 @@ const AdminDashboard = () => {
     return newImageUrls;
   };
 
-  // Handle drops inside the opened drawer
   const handleImageUpload = async (files) => {
     if (!files || !files.length) return;
     setIsProcessing(true);
     try {
       const newImageUrls = await processFilesAndGetUrls(files);
-      if (newImageUrls.length > 0) setExpandedImage(newImageUrls[0]); // ✨ Auto-expand uploaded image
+      if (newImageUrls.length > 0) setExpandedImage(newImageUrls[0]); 
       setSelectedItem(prev => ({ 
         ...prev, 
         images: [...(prev.images || []), ...newImageUrls] 
@@ -425,7 +423,7 @@ const AdminDashboard = () => {
     }
   };
 
-  // Handles dragging an image directly onto a Product Card in the grid/list
+  // ✨ FIX: Complete protection against async state race-condition updates
   const handleProductCardDrop = async (e, product) => {
     e.preventDefault();
     e.stopPropagation();
@@ -434,17 +432,25 @@ const AdminDashboard = () => {
     const files = Array.from(e.dataTransfer.files).filter(file => file.type.startsWith('image/') || file.name.toLowerCase().endsWith('.heic'));
     if (!files.length) return;
 
-    openDrawer('product', product);
     setIsProcessing(true);
-
     try {
       const newImageUrls = await processFilesAndGetUrls(files);
-      if (newImageUrls.length > 0) setExpandedImage(newImageUrls[0]); // ✨ Auto-expand the dropped image
       
-      setSelectedItem(prev => ({ 
-        ...prev, 
-        images: [...(prev.images || []), ...newImageUrls] 
-      }));
+      const targetProduct = product || { 
+        name: '', retail: 0, ws: 0, bulk: 0, retailMoq: 1, wsMoq: 1, bulkMoq: 1, 
+        packSize: 1, cartonSize: '', stock: 100, category: '', tagsInput: '', desc: '', images: [], variantLabel: '', variants: [] 
+      };
+
+      const updatedProduct = {
+        ...targetProduct,
+        images: [...(targetProduct.images || []), ...newImageUrls]
+      };
+
+      setDrawerType('product');
+      setSelectedItem(updatedProduct);
+      setIsDrawerOpen(true);
+      
+      if (newImageUrls.length > 0) setExpandedImage(newImageUrls[0]); 
     } catch (error) {
       alert(error.message || 'Upload failed.');
     } finally {
@@ -487,7 +493,7 @@ const AdminDashboard = () => {
       const newVariants = [...(selectedItem.variants || [])];
       newVariants[index].image = finalUrl; 
       setSelectedItem(prev => ({ ...prev, variants: newVariants }));
-      setExpandedImage(finalUrl); // ✨ Auto-expand variant image too
+      setExpandedImage(finalUrl); 
     } catch (error) {
       alert('Variant image upload failed.');
     } finally {
@@ -498,7 +504,7 @@ const AdminDashboard = () => {
   const handleRemoveImage = (indexToRemove) => {
     setSelectedItem(prev => {
       const imageToRemove = prev.images[indexToRemove];
-      if (expandedImage === imageToRemove) setExpandedImage(null); // Close preview if deleted
+      if (expandedImage === imageToRemove) setExpandedImage(null); 
       return {
         ...prev,
         images: prev.images.filter((_, index) => index !== indexToRemove)
@@ -673,6 +679,12 @@ const AdminDashboard = () => {
               className={`w-11 h-6 rounded-full p-1 flex items-center transition-colors duration-300 ease-in-out ${hideOutOfStock ? 'bg-[#D4AF37]' : 'bg-gray-300'}`}
             >
               <div className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-300 ease-in-out ${hideOutOfStock ? 'translate-x-5' : 'translate-x-0'}`}></div>
+            </button>
+            <button 
+              onClick={() => navigate('/garv-secure-admin/triage')} 
+              className="px-4 py-2 bg-blue-50 text-blue-700 border border-blue-200 rounded-md text-sm font-bold hover:bg-blue-100 transition shadow-sm whitespace-nowrap"
+              >
+              📸 Image Triage Workspace
             </button>
           </div>
           
@@ -1008,7 +1020,7 @@ const AdminDashboard = () => {
         <div className="fixed inset-0 z-50 flex justify-end">
           <div className="absolute inset-0 bg-black bg-opacity-40 backdrop-blur-sm transition-opacity" onClick={closeDrawer}></div>
           
-          {/* ✨ NEW: Side-by-Side Expanded Reference Image */}
+          {/* ✨ Side-by-Side Expanded Reference Image Panel Layout */}
           {expandedImage && (
             <div className="absolute inset-y-0 left-0 right-0 md:right-[28rem] p-4 lg:p-8 hidden md:flex items-center justify-center z-40 pointer-events-none">
                 <div className="relative w-full h-full flex items-center justify-center pointer-events-auto bg-black bg-opacity-10 rounded-2xl p-2 shadow-inner">
@@ -1064,7 +1076,6 @@ const AdminDashboard = () => {
                               </span>
                             </div>
                           )}
-                          {/* ✨ MODIFIED: Click thumbnail to expand image */}
                           <img 
                             src={img} 
                             alt={`Product ${idx}`} 

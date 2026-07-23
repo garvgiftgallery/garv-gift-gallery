@@ -13,9 +13,10 @@ import Profile from './pages/Profile';
 import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
 import AuthPage from './pages/AuthPage';
+import TriageDashboard from './pages/TriageDashboard';
 
 function App() {
-  // 🚨 GRAB THE USER TIER FROM CONTEXT
+  // GRAB THE USER TIER FROM CONTEXT
   const { currentUser, userTier } = useAuth(); 
 
   return (
@@ -29,8 +30,6 @@ function App() {
       >
         <Navbar />
         
-        {/* ✨ FIXED: Removed 'lg:max-w-[1400px]' and horizontal padding (5%). 
-            This allows the inner components (like ShopGallery) to stretch edge-to-edge! */}
         <main 
           className="w-full flex-1" 
           style={{ paddingTop: '2rem', paddingBottom: '2rem' }}
@@ -52,10 +51,16 @@ function App() {
             {/* Secure Admin Portal Access */}
             <Route path="/admin-portal-access" element={<AdminLogin />} />
             
-            {/* 🚨 THE UPGRADED BOUNCER: Only allows true Admins access */}
+            {/* THE UPGRADED BOUNCER: Only allows true Admins access */}
             <Route 
               path="/garv-secure-admin" 
               element={userTier === 'admin' ? <AdminDashboard /> : <Navigate to="/login" />} 
+            />
+
+            {/* ✨ FIXED: Applied your exact inline security bouncer pattern here */}
+            <Route 
+              path="/garv-secure-admin/triage" 
+              element={userTier === 'admin' ? <TriageDashboard /> : <Navigate to="/login" />} 
             />
 
             {/* Fallback for undefined routes */}
