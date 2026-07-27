@@ -94,9 +94,11 @@ const ProductEditDrawer = ({ item, activeImage, onClose, onSaveSuccess }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end" onKeyDown={handleKeyDown}>
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-lg bg-white h-full p-6 shadow-2xl overflow-y-auto z-50 flex flex-col justify-between">
+    <div className="fixed inset-0 z-50 flex justify-end pointer-events-none" onKeyDown={handleKeyDown}>
+      {/* ✨ NO BLUR: Transparent click-outside overlay so left image stays 100% sharp and readable */}
+      <div className="absolute inset-0 bg-black/10 pointer-events-auto transition-opacity" onClick={onClose} />
+      
+      <div className="relative w-full max-w-lg bg-white h-full p-6 shadow-2xl overflow-y-auto z-50 flex flex-col justify-between pointer-events-auto border-l border-gray-300">
         
         <div className="space-y-5">
           <div className="flex justify-between items-center border-b pb-4">

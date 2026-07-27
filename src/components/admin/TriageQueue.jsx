@@ -6,7 +6,6 @@ import heic2any from 'heic2any';
 
 const TriageQueue = ({ pendingImages, setPendingImages, setIsProcessing, onImageSelected, selectedImage }) => {
 
-  // Client-side WebP / HEIC Optimization Engine
   const convertToWebP = async (originalFile) => {
     let fileToProcess = originalFile;
     const isHeic = originalFile.type === "image/heic" || originalFile.type === "image/heif" || originalFile.name.toLowerCase().endsWith(".heic");
@@ -76,6 +75,15 @@ const TriageQueue = ({ pendingImages, setPendingImages, setIsProcessing, onImage
     }
   };
 
+  // ✨ NEW: Discard redundant images manually from queue
+  const handleDiscardImage = (idToRemove, e) => {
+    e.stopPropagation(); // Prevents opening the left preview panel
+    setPendingImages(prev => prev.filter(img => img.id !== idToRemove));
+    if (selectedImage?.id === idToRemove) {
+      onImageSelected(null);
+    }
+  };
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop, accept: {'image/*': [], '.heic': [], '.heif': []} });
 
   return (
@@ -87,14 +95,24 @@ const TriageQueue = ({ pendingImages, setPendingImages, setIsProcessing, onImage
         </p>
       </div>
       
-      <div className="grid grid-cols-5 gap-2 max-h-48 overflow-y-auto p-1 hide-scrollbar">
+      <div className="grid grid-cols-5 gap-3 max-h-48 overflow-y-auto p-1 hide-scrollbar">
         {pendingImages.map(item => (
-          <img 
-            key={item.id} 
-            src={item.url} 
-            onClick={() => onImageSelected(item)}
-            className={`w-16 h-16 object-cover rounded cursor-pointer border-2 transition-all ${selectedImage?.id === item.id ? 'border-[#D4AF37] scale-95 ring-2 ring-yellow-100' : 'border-transparent hover:border-gray-400'}`} 
-          />
+          <div key={item.id} className="relative group">
+            <img 
+              src={item.url} 
+              onClick={() => onImageSelected(item)}
+              className={`w-full h-16 object-cover rounded cursor-pointer border-2 transition-all ${selectedImage?.id === item.id ? 'border-[#D4AF37] scale-95 ring-2 ring-yellow-100' : 'border-transparent hover:border-gray-400'}`} 
+            />
+            {/* ✨ RED DISCARD BUTTON: Click to remove redundant photo from queue */}
+            <button
+              type="button"
+              onClick={(e) => handleDiscardImage(item.id, e)}
+              title="Remove duplicate/redundant image from queue"
+              className="absolute -top-1.5 -right-1.5 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-black shadow-md hover:bg-red-700 transition opacity-80 group-hover:opacity-100 z-20"
+            >
+              &times;
+            </button>
+          </div>
         ))}
       </div>
     </div>
