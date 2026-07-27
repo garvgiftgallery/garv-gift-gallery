@@ -53,7 +53,7 @@ const TriageDashboard = () => {
           </div>
         ) : (
           <div className="text-gray-400 text-sm font-semibold border-2 border-dashed border-gray-300 p-12 rounded-xl bg-white/50 text-center">
-            Select a staged thumbnail from the queue to inspect details
+            Select or upload staged images to start triaging
           </div>
         )}
       </div>
@@ -84,7 +84,7 @@ const TriageDashboard = () => {
           />
         </div>
 
-        {/* SEARCH RESULT CARDS WITH ALL DETAILS */}
+        {/* SEARCH RESULT CARDS */}
         <div className="flex-1 overflow-y-auto space-y-3 pr-1 hide-scrollbar">
           {filteredSearchResults.map(prod => (
             <div 
@@ -142,8 +142,20 @@ const TriageDashboard = () => {
           onClose={() => setIsDrawerOpen(false)} 
           onSaveSuccess={() => {
             if (selectedImage) {
-              setPendingImages(prev => prev.filter(img => img.id !== selectedImage.id));
-              setSelectedImage(null);
+              // ✨ HANDS-FREE AUTO-ADVANCE: Remove saved image and auto-select the next image in queue
+              setPendingImages(prev => {
+                const currentIndex = prev.findIndex(img => img.id === selectedImage.id);
+                const nextQueue = prev.filter(img => img.id !== selectedImage.id);
+                
+                if (nextQueue.length > 0) {
+                  const nextIndex = currentIndex < nextQueue.length ? currentIndex : nextQueue.length - 1;
+                  setSelectedImage(nextQueue[nextIndex]);
+                } else {
+                  setSelectedImage(null);
+                }
+                
+                return nextQueue;
+              });
             }
             fetchProducts();
           }}

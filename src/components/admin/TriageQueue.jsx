@@ -66,7 +66,14 @@ const TriageQueue = ({ pendingImages, setPendingImages, setIsProcessing, onImage
         const url = await getDownloadURL(uploadTask.ref);
         newImages.push({ id: uploadTask.ref.fullPath, url, name: webpFile.name });
       }
-      setPendingImages(prev => [...prev, ...newImages]);
+      setPendingImages(prev => {
+        const updated = [...prev, ...newImages];
+        // ✨ If no image was previously selected, auto-select the first newly dropped image
+        if (!selectedImage && updated.length > 0) {
+          onImageSelected(updated[0]);
+        }
+        return updated;
+      });
     } catch (err) {
       console.error(err);
       alert(err.message || "Upload pipeline encountered an error.");
@@ -75,13 +82,23 @@ const TriageQueue = ({ pendingImages, setPendingImages, setIsProcessing, onImage
     }
   };
 
-  // ✨ NEW: Discard redundant images manually from queue
+  // ✨ Discard redundant image and auto-select next available image
   const handleDiscardImage = (idToRemove, e) => {
-    e.stopPropagation(); // Prevents opening the left preview panel
-    setPendingImages(prev => prev.filter(img => img.id !== idToRemove));
-    if (selectedImage?.id === idToRemove) {
-      onImageSelected(null);
-    }
+    e.stopPropagation();
+    setPendingImages(prev => {
+      const currentIndex = prev.findIndex(img => img.id === idToRemove);
+      const nextQueue = prev.filter(img => img.id !== idToRemove);
+      
+      if (selectedImage?.id === idToRemove) {
+        if (nextQueue.length > 0) {
+          const nextIndex = currentIndex < nextQueue.length ? currentIndex : nextQueue.length - 1;
+          onImageSelected(nextQueue[nextIndex]);
+        } else {
+          onImageSelected(null);
+        }
+      }
+      return nextQueue;
+    });
   };
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop, accept: {'image/*': [], '.heic': [], '.heif': []} });
@@ -103,7 +120,6 @@ const TriageQueue = ({ pendingImages, setPendingImages, setIsProcessing, onImage
               onClick={() => onImageSelected(item)}
               className={`w-full h-16 object-cover rounded cursor-pointer border-2 transition-all ${selectedImage?.id === item.id ? 'border-[#D4AF37] scale-95 ring-2 ring-yellow-100' : 'border-transparent hover:border-gray-400'}`} 
             />
-            {/* ✨ RED DISCARD BUTTON: Click to remove redundant photo from queue */}
             <button
               type="button"
               onClick={(e) => handleDiscardImage(item.id, e)}
